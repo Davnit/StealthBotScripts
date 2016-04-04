@@ -143,7 +143,6 @@ Function GetSystemInfo()
         dicLookup.Add "CPU" & i & "_Architecture", objPR.Architecture
         dicLookup.Add "CPU" & i & "_Manufacturer", objPR.Manufacturer
         dicLookup.Add "CPU" & i & "_CoreCount", objPR.NumberOfCores
-        dicLookup.Add "CPU" & i & "_ThreadCount", objPR.ThreadCount
         dicLookup.Add "CPU" & i & "_LogicalProcessors", objPR.NumberOfLogicalProcessors
         
         i = i + 1
