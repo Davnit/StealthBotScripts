@@ -52,33 +52,33 @@ Sub Event_Command(Command)
                 Set objWMI = GetObject(WMI_OBJECT_URI)
                 Set instances = objWMI.InstancesOf(className)
                 
-                If (Len(Command.Argument(INFO_RAW_ITEM)) = 0) Then
-                    If (instances.Count = 0) Then
-                        Command.Respond "There were no instances of " & className & " returned."
-                    Else
-                        Command.Respond "There were " & instances.Count & " instances returned."
-                    End If
+                If (instances.Count = 0) Then
+                    Command.Respond "There were no instances of " & className & " returned."
                 Else
-                    If (Len(Command.Argument(INFO_RAW_PROP)) = 0) Then
-                        Command.Respond "You must specify a property to return."
-                        Exit Sub
+                    If (Len(Command.Argument(INFO_RAW_ITEM)) = 0) Then
+                        Command.Respond "There were " & instances.Count & " instances returned."
+                    Else
+                        If (Len(Command.Argument(INFO_RAW_PROP)) = 0) Then
+                            Command.Respond "You must specify a property to return."
+                            Exit Sub
+                        End If
+                    
+                        i = 0
+                        Set targetItem = Nothing
+                        targetIndex = CInt(Command.Argument(INFO_RAW_ITEM))
+                        For Each obj In instances
+                            If i = targetIndex Then
+                                Set targetItem = obj
+                                Exit For
+                            End If
+                        Next
+                    
+                        For Each obj In targetItem.Properties_
+                            If Match(obj.Name, Command.Argument(INFO_RAW_PROP), True) Then
+                                Command.Respond obj.Name & ": " & obj.Value
+                            End If
+                        Next
                     End If
-                    
-                    i = 0
-                    Set targetItem = Nothing
-                    targetIndex = CInt(Command.Argument(INFO_RAW_ITEM))
-                    For Each obj In instances
-                        If i = targetIndex Then
-                            Set targetItem = obj
-                            Exit For
-                        End If
-                    Next
-                    
-                    For Each obj In targetItem.Properties_
-                        If Match(obj.Name, Command.Argument(INFO_RAW_PROP), True) Then
-                            Command.Respond obj.Name & ": " & obj.Value
-                        End If
-                    Next
                 End If
             Else
                 Command.Respond StringFormat("Invalid command. Correct syntax {0} <class> [index] [property]", Command.Name)
@@ -138,6 +138,7 @@ Function GetSystemInfo()
         dicLookup.Add "CPU" & i & "_Architecture", objPR.Architecture
         dicLookup.Add "CPU" & i & "_Manufacturer", objPR.Manufacturer
         dicLookup.Add "CPU" & i & "_CoreCount", objPR.NumberOfCores
+        dicLookup.Add "CPU" & i & "_ThreadCount", objPR.ThreadCount
         dicLookup.Add "CPU" & i & "_LogicalProcessors", objPR.NumberOfLogicalProcessors
         
         i = i + 1
