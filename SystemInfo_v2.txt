@@ -26,11 +26,6 @@ Sub Event_Load()
     Call GetSystemInfo
 End Sub
 
-Sub Event_Close()
-    If (Not (OpenCommand(INFO_COMMAND) Is Nothing)) Then DeleteCommand INFO_COMMAND
-    If (Not (OpenCommand(INFO_RAW_COMMAND) Is Nothing)) Then DeleteCommand INFO_RAW_COMMAND
-End Sub
-
 Sub Event_Command(Command)
     Select Case LCase(Command.Name)
         Case INFO_COMMAND:
