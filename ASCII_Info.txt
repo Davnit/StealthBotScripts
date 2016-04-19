@@ -1,0 +1,210 @@
+Script("Name") = "ASCII Info"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Description") = "Displays information about ASCII characters."
+
+Const AI_COMMAND = "ascii"
+Const AI_PARAM = "param"
+
+Public Table
+
+Sub Event_Load()
+    ReDim Table(127)
+    Table(0) = Array(0, Chr(0), "NUL", "null")
+    Table(1) = Array(1, Chr(1), "SOH", "start of heading")
+    Table(2) = Array(2, Chr(2), "STX", "start of text")
+    Table(3) = Array(3, Chr(3), "ETX", "end of text")
+    Table(4) = Array(4, Chr(4), "EOT", "end of transmission")
+    Table(5) = Array(5, Chr(5), "ENQ", "enquiry")
+    Table(6) = Array(6, Chr(6), "ACK", "acknowledge")
+    Table(7) = Array(7, Chr(7), "BEL", "bell")
+    Table(8) = Array(8, Chr(8), "BS", "backspace")
+    Table(9) = Array(9, Chr(9), "TAB", "horizontal tab")
+    Table(10) = Array(10, Chr(10), "LF", "new line")
+    Table(11) = Array(11, Chr(11), "VT", "vertical tab")
+    Table(12) = Array(12, Chr(12), "FF", "form feed")
+    Table(13) = Array(13, Chr(13), "CR", "carriage return")
+    Table(14) = Array(14, Chr(14), "SO", "shift out")
+    Table(15) = Array(15, Chr(15), "SI", "shift in")
+    Table(16) = Array(16, Chr(16), "DLE", "data link escape")
+    Table(17) = Array(17, Chr(17), "DC1", "device control 1")
+    Table(18) = Array(18, Chr(18), "DC2", "device control 2")
+    Table(19) = Array(19, Chr(19), "DC3", "device control 3")
+    Table(20) = Array(20, Chr(20), "DC4", "device control 4")
+    Table(21) = Array(21, Chr(21), "NAK", "negative acknowledge")
+    Table(22) = Array(22, Chr(22), "SYN", "synchronous idle")
+    Table(23) = Array(23, Chr(23), "ETB", "end of transmission block")
+    Table(24) = Array(24, Chr(24), "CAN", "cancel")
+    Table(25) = Array(25, Chr(25), "EM", "end of medium")
+    Table(26) = Array(26, Chr(26), "SUB", "substitute")
+    Table(27) = Array(27, Chr(27), "ESC", "escape")
+    Table(28) = Array(28, Chr(28), "FS", "file separator")
+    Table(29) = Array(29, Chr(29), "GS", "group separator")
+    Table(30) = Array(30, Chr(30), "RS", "record separator")
+    Table(31) = Array(31, Chr(31), "US", "unit separator")
+    Table(32) = Array(32, Chr(32), "Space", "space")
+    Table(33) = Array(33, Chr(33), "!", "exlamation point")
+    Table(34) = Array(34, Chr(34), """", "quote")
+    Table(35) = Array(35, Chr(35), "#", "octothorpe, hash")
+    Table(36) = Array(36, Chr(36), "$", "dollar sign")
+    Table(37) = Array(37, Chr(37), "%", "percent")
+    Table(38) = Array(38, Chr(38), "&", "ampersand, and")
+    Table(39) = Array(39, Chr(39), "'", "single quote, apostrophe")
+    Table(40) = Array(40, Chr(40), "(", "open parenthesis")
+    Table(41) = Array(41, Chr(41), ")", "close parenthesis")
+    Table(42) = Array(42, Chr(42), "*", "asterisk")
+    Table(43) = Array(43, Chr(43), "+", "plus")
+    Table(44) = Array(44, Chr(44), ",", "comma")
+    Table(45) = Array(45, Chr(45), "-", "hyphen")
+    Table(46) = Array(46, Chr(46), ".", "period")
+    Table(47) = Array(47, Chr(47), "/", "forward slash")
+    Table(48) = Array(48, Chr(48), "0", "zero")
+    Table(49) = Array(49, Chr(49), "1", "one")
+    Table(50) = Array(50, Chr(50), "2", "two")
+    Table(51) = Array(51, Chr(51), "3", "three")
+    Table(52) = Array(52, Chr(52), "4", "four")
+    Table(53) = Array(53, Chr(53), "5", "five")
+    Table(54) = Array(54, Chr(54), "6", "six")
+    Table(55) = Array(55, Chr(55), "7", "seven")
+    Table(56) = Array(56, Chr(56), "8", "eight")
+    Table(57) = Array(57, Chr(57), "9", "nine")
+    Table(58) = Array(58, Chr(58), ":", "colon")
+    Table(59) = Array(59, Chr(59), ";", "semi-colon")
+    Table(60) = Array(60, Chr(60), "<", "less than")
+    Table(61) = Array(61, Chr(61), "=", "equal")
+    Table(62) = Array(62, Chr(62), ">", "greater than")
+    Table(63) = Array(63, Chr(63), "?", "question mark")
+    Table(64) = Array(64, Chr(64), "@", "ampersat, at symbol")
+    Table(65) = Array(65, Chr(65), "A", "uppercase A")
+    Table(66) = Array(66, Chr(66), "B", "uppercase B")
+    Table(67) = Array(67, Chr(67), "C", "uppercase C")
+    Table(68) = Array(68, Chr(68), "D", "uppercase D")
+    Table(69) = Array(69, Chr(69), "E", "uppercase E")
+    Table(70) = Array(70, Chr(70), "F", "uppercase F")
+    Table(71) = Array(71, Chr(71), "G", "uppercase G")
+    Table(72) = Array(72, Chr(72), "H", "uppercase H")
+    Table(73) = Array(73, Chr(73), "I", "uppercase I")
+    Table(74) = Array(74, Chr(74), "J", "uppercase J")
+    Table(75) = Array(75, Chr(75), "K", "uppercase K")
+    Table(76) = Array(76, Chr(76), "L", "uppercase L")
+    Table(77) = Array(77, Chr(77), "M", "uppercase M")
+    Table(78) = Array(78, Chr(78), "N", "uppercase N")
+    Table(79) = Array(79, Chr(79), "O", "uppercase O")
+    Table(80) = Array(80, Chr(80), "P", "uppercase P")
+    Table(81) = Array(81, Chr(81), "Q", "uppercase Q")
+    Table(82) = Array(82, Chr(82), "R", "uppercase R")
+    Table(83) = Array(83, Chr(83), "S", "uppercase S")
+    Table(84) = Array(84, Chr(84), "T", "uppercase T")
+    Table(85) = Array(85, Chr(85), "U", "uppercase U")
+    Table(86) = Array(86, Chr(86), "V", "uppercase V")
+    Table(87) = Array(87, Chr(87), "W", "uppercase W")
+    Table(88) = Array(88, Chr(88), "X", "uppercase X")
+    Table(89) = Array(89, Chr(89), "Y", "uppercase Y")
+    Table(90) = Array(90, Chr(90), "Z", "uppercase Z")
+    Table(91) = Array(91, Chr(91), "[", "open bracket")
+    Table(92) = Array(92, Chr(92), "\", "back slash")
+    Table(93) = Array(93, Chr(93), "]", "close bracket")
+    Table(94) = Array(94, Chr(94), "^", "caret")
+    Table(95) = Array(95, Chr(95), "_", "underscore")
+    Table(96) = Array(96, Chr(96), "`", "acute, grave")
+    Table(97) = Array(97, Chr(97), "a", "lowercase A")
+    Table(98) = Array(98, Chr(98), "b", "lowercase B")
+    Table(99) = Array(99, Chr(99), "c", "lowercase C")
+    Table(100) = Array(100, Chr(100), "d", "lowercase D")
+    Table(101) = Array(101, Chr(101), "e", "lowercase E")
+    Table(102) = Array(102, Chr(102), "f", "lowercase F")
+    Table(103) = Array(103, Chr(103), "g", "lowercase G")
+    Table(104) = Array(104, Chr(104), "h", "lowercase H")
+    Table(105) = Array(105, Chr(105), "i", "lowercase I")
+    Table(106) = Array(106, Chr(106), "j", "lowercase J")
+    Table(107) = Array(107, Chr(107), "k", "lowercase K")
+    Table(108) = Array(108, Chr(108), "l", "lowercase L")
+    Table(109) = Array(109, Chr(109), "m", "lowercase M")
+    Table(110) = Array(110, Chr(110), "n", "lowercase N")
+    Table(111) = Array(111, Chr(111), "o", "lowercase O")
+    Table(112) = Array(112, Chr(112), "p", "lowercase P")
+    Table(113) = Array(113, Chr(113), "q", "lowercase Q")
+    Table(114) = Array(114, Chr(114), "r", "lowercase R")
+    Table(115) = Array(115, Chr(115), "s", "lowercase S")
+    Table(116) = Array(116, Chr(116), "t", "lowercase T")
+    Table(117) = Array(117, Chr(117), "u", "lowercase U")
+    Table(118) = Array(118, Chr(118), "v", "lowercase V")
+    Table(119) = Array(119, Chr(119), "w", "lowercase W")
+    Table(120) = Array(120, Chr(120), "x", "lowercase X")
+    Table(121) = Array(121, Chr(121), "y", "lowercase Y")
+    Table(122) = Array(122, Chr(122), "z", "lowercase Z")
+    Table(123) = Array(123, Chr(123), "{", "open brace")
+    Table(124) = Array(124, Chr(124), "|", "pipe")
+    Table(125) = Array(125, Chr(125), "}", "close brace")
+    Table(126) = Array(126, Chr(126), "~", "tilde")
+    Table(127) = Array(127, Chr(127), "DEL", "delete")
+    
+    Call InitCommands
+End Sub
+
+Sub Event_Command(Command)
+    Select Case LCase(Command.Name)
+        Case AI_COMMAND
+            If Command.IsValid Then
+                c = Command.Argument(AI_PARAM)
+                
+                dec = -1
+                
+                'Hex or dec?
+                If Left(LCase(c), 2) = "0x" Then
+                    dec = CLng("&H" & Mid(c, 3))
+                Else
+                    If IsNumeric(c) Then
+                        dec = Int(c)
+                    End If
+                End If
+                
+                If dec > -1 Then
+                    Command.Respond GetCharacterInfo(dec)
+                Else
+                    'String or char
+                    For i = 0 To UBound(Table)
+                        If ((c = Table(i)(1)) Or (c = Table(i)(2)) Or (c = Table(i)(3))) Then
+                            Command.Respond GetCharacterInfo(i)
+                            Exit Sub
+                        ElseIf ((Len(c) > 1) And ((LCase(c) = LCase(Table(i)(2))) Or (LCase(c) = LCase(Table(i)(3))))) Then
+                            Command.Respond GetCharacterInfo(i)
+                            Exit Sub
+                        End If
+                    Next
+                    
+                    Command.Respond "The specified character was not found in the ASCII table."
+                End If
+            Else
+                Command.Respond "You must supply a character, its name, or its decimal or hex equivalent."
+            End If
+    End Select
+End Sub
+
+Function GetCharacterInfo(dec)
+    If ((dec >= LBound(Table)) And (dec <= UBound(Table))) Then
+        GetCharacterInfo = StringFormat("The ASCII character '{0}' (DEC: {1}) is '{2}'.", Table(dec)(2), Table(dec)(0), Table(dec)(3))
+    Else
+        GetCharacterInfo = "The specified character is out of range."
+    End If
+End Function
+
+Sub InitCommands()
+    If OpenCommand(AI_COMMAND) Is Nothing Then
+        Set oCmd = CreateCommand(AI_COMMAND)
+        With oCmd
+            .Description = "Gets information about ASCII characters."
+            .RequiredRank = 20
+            .RequiredFlags = "G"
+            
+            Set oParam = .NewParameter(AI_PARAM, False, "string")
+            oParam.Description = "The decimal, hex, char, or name of the character to get information about."
+            .Parameters.Add oParam
+            
+            Set oParam = Nothing
+            .Save
+        End With
+        Set oCmd = Nothing
+    End If
+End Sub
