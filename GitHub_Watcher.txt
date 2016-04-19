@@ -1,0 +1,420 @@
+Script("Name") = "GitHub Watcher"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 0
+
+' Command constants
+Const GW_COMMAND = "gitwatch"   ' Name of the command
+Const GW_ACTION = "action"      ' first parameter name
+Const GW_REPO = "repo"          ' second parameter name
+
+' Global variables
+Public RepoChecks       ' The list of repositories to check (as CommitCheck objects)
+Public CheckIndex       ' The current position in the repo list
+
+' Settings
+Public WatchFile        ' The name of the file containing the watch list
+Public CheckInterval    ' The time between each repository check, in seconds.
+Public CheckDelay       ' The time to wait after all repositories have been checked, in seconds.
+Public MaxCommits       ' The maximum number of commits to individually announce before grouping.
+Public DisplayMode      ' The output method (uses DSP) - 1 = in channel, 2 = emote, 4 = local only
+
+Sub Event_Load()
+    Call InitCommands
+    Call LoadSettings
+    
+    CreateObj "Inet", "gitInet"         ' Used for querying the GitHub API
+    
+    CreateObj "LongTimer", "gitTime"    ' Checks for new commits
+    gitTime.Interval = CheckInterval
+    gitTime.Enabled = True
+    
+    'Loads watch list from the file
+    Call LoadChecks
+
+    CheckIndex = 0
+End Sub
+
+Sub Event_Close()
+    Call SaveSettings
+    Call SaveChecks
+End Sub
+
+Sub Event_Command(Command)
+    Select Case LCase(Command.Name)
+        Case GW_COMMAND
+            If Command.IsValid Then
+                Select Case LCase(Command.Argument(GW_ACTION))
+                    Case "add" ' <owner>/<repo>/[branch], default branch = master
+                        s = Split(Command.Argument(GW_REPO), "/")
+                        If UBound(s) > 0 Then
+                            owner = s(0)
+                            repo = s(1)
+                        Else
+                            Command.Respond "Invalid repository. Format: <owner>/<repo>/[branch]"
+                            Exit Sub
+                        End If
+
+                        'Was a branch specified?
+                        If UBound(s) > 1 Then
+                            branch = s(2)
+                        Else
+                            branch = "master"
+                        End If
+                        
+                        Set check = MakeCheck(owner, repo, branch)
+                        Call AddCheck(check)
+                        Call SaveChecks
+                        
+                        Command.Respond StringFormat("Added repository '{0}/{1}', branch '{2}'", check.RepoOwner, check.RepoName, check.RepoBranch)
+                    Case "remove", "rem"    ' <owner>/<repo>/<branch>
+                        repo = Command.Argument(GW_REPO)
+                        If RepoChecks.Exists(repo) Then
+                            RepoChecks.Remove repo
+                            
+                            Command.Respond "Repository removed from watch list."
+                        Else
+                            Command.Respond "Repository not found in the watch list."
+                        End If
+                End Select
+            Else
+                Command.Respond StringFormat("Invalid syntax. Format: {0} <action> [repo]", Command.Name)
+            End If
+    End Select
+End Sub
+
+'Loads the list of watched repositories
+Sub LoadChecks()
+    Set oFSO = CreateObject("Scripting.FileSystemObject")
+    
+    Set RepoChecks = CreateObject("Scripting.Dictionary")
+    If oFSO.FileExists(WatchFile) Then
+        Set oFile = oFSO.OpenTextFile(WatchFile, 1)
+        
+        Do While Not oFile.AtEndOfStream
+            checkData = oFile.ReadLine
+            
+            If Len(checkData) > 0 Then
+                Set check = New CommitCheck
+                check.ParseData checkData
+                
+                Call AddCheck(check)
+            End If
+        Loop
+        
+        oFile.Close
+        Set oFile = Nothing
+    End If
+    Set oFSO = Nothing
+    
+    AddChat vbYellow, StringFormat("[GW] Loaded {0} repos to watch.", RepoChecks.Count)
+End Sub
+
+' Creates a check object
+Function MakeCheck(owner, repo, branch)
+    Set check = New CommitCheck
+    check.RepoOwner = owner
+    check.RepoName = repo
+    check.RepoBranch = branch
+    
+    Set MakeCheck = check
+End Function
+
+' Adds a check object to the list
+Sub AddCheck(check)
+    RepoChecks.Add StringFormat("{0}/{1}/{2}", check.RepoOwner, check.RepoName, check.RepoBranch), check
+End Sub
+
+' Saves the check list to the watch file.
+Sub SaveChecks()
+    If RepoChecks.Count = 0 Then Exit Sub
+    
+    Set oFSO = CreateObject("Scripting.FileSystemObject")
+    
+    Set oFile = oFSO.OpenTextFile(WatchFile, 2, True)
+    
+    For Each check In RepoChecks.Items
+        oFile.WriteLine check.GetData
+    Next
+    oFile.Close
+    Set oFile = Nothing
+    Set oFSO = Nothing
+End Sub
+
+' Gets commits from the specified repository
+'  since is the timestamp (YYYY-MM-DDTHH:mm:ssZ) of the earliest to return commits from
+Function GetCommitList(owner, repo, branch, since)
+    url = "https://api.github.com/repos/" & owner & "/" & repo & "/commits"
+    params = vbNullString
+    
+    ' Add branch if specified
+    If LenB(branch) > 0 Then
+        params = params & "sha=" & branch
+    End If
+    
+    ' Add since if specified
+    If LenB(since) > 0 Then
+        If LenB(params) > 0 Then
+            params = params & "&"
+        End If
+        
+        params = params & "since=" & since
+    End If
+    
+    ' Attach parameters
+    If LenB(params) > 0 Then
+        url = url & "?" & params
+    End If
+    
+    'AddChat vbCyan, StringFormat("[GW] Checking repo: {0}/{1} branch {2} ({3})", owner, repo, branch, since)
+    s = Split(gitInet.OpenURL(CStr(url)), """commit"":{")
+    
+    ' Put each commit into an array
+    commitCount = 0
+    ReDim cList(0)
+    For i = 1 To UBound(s)
+        ReDim Preserve cList(commitCount)
+        commitCount = commitCount + 1
+        
+        cList(commitCount - 1) = s(i)
+    Next
+    
+    GetCommitList = cList
+End Function
+
+Sub gitTime_Timer()
+    If RepoChecks.Count = 0 Then Exit Sub       ' Exit if there are no repositories to check
+    If gitInet.StillExecuting Then Exit Sub     ' Exit if the INET object is busy
+    
+    ' Check the next repository
+    If CheckIndex < RepoChecks.Count Then            
+        Set check = RepoChecks.Items()(CheckIndex)
+        check.CheckForCommits
+        
+        CheckIndex = CheckIndex + 1
+    End If
+    
+    ' If we are done with the list, wait longer
+    If CheckIndex >= RepoChecks.Count Then
+        gitTime.Interval = CheckDelay
+        CheckIndex = 0
+    Else
+        ' More to check
+        If gitTime.Interval <> CheckInterval Then
+            gitTime.Interval = CheckInterval
+        End If
+    End If
+End Sub
+
+' Creates all of the commands used in the script, if needed.
+Sub InitCommands()
+    If OpenCommand(GW_COMMAND) Is Nothing Then
+        Set oCmd = CreateCommand(GW_COMMAND)
+        With oCmd
+            .RequiredRank = 60
+            .Description = "Controls the github watcher."
+            .Aliases.Add "gitw"
+            .Aliases.Add "gw"
+            
+            Set oParam = .NewParameter(GW_ACTION, False, "word")
+            oParam.Description = "The action to execute."
+            .Parameters.Add oParam
+            
+            Set oParam = .NewParameter(GW_REPO, True, "word")
+            oParam.Description = "The repo to manipulate"
+            .Parameters.Add oParam
+            
+            .Save
+        End With
+        Set oCmd = Nothing
+        Set oParam = Nothing
+    End If
+End Sub
+
+' Loads the script's settings
+Sub LoadSettings()   
+    WatchFile = ReadSetting("WatchFile", "git_watch.txt")
+    CheckInterval = Int(ReadSetting("CheckInterval", 60))
+    CheckDelay = Int(ReadSetting("CheckDelay", 600))
+    MaxCommits = Int(ReadSetting("MaxCommits", 1))
+    DisplayMode = Int(ReadSetting("DisplayMode", 1))
+End Sub
+
+' Reads a setting and uses the default value if it's not set.
+Function ReadSetting(settingName, defaultValue)
+    s = GetSettingsEntry(settingName)
+    If LenB(s) > 0 Then 
+        ReadSetting = s
+    Else
+        ReadSetting = defaultValue
+    End If
+End Function
+
+' Saves settings
+Sub SaveSettings()
+    WriteSettingsEntry "WatchFile", WatchFile
+    WriteSettingsEntry "CheckInterval", CheckInterval
+    WriteSettingsEntry "CheckDelay", CheckDelay
+    WriteSettingsEntry "MaxCommits", MaxCommits
+    WriteSettingsEntry "DisplayMode", DisplayMode
+End Sub
+
+' Parses and stores information about a specific commit
+Class GitCommit
+    Public RepoOwner
+    Public RepoName
+    Public RepoBranch
+    
+    Public AuthorName
+    Public CommitterName
+    Public Message
+    Public CommitTime
+    Public HtmlUrl
+    
+    ' Parses a commit from the returned JSON
+    Public Sub ParseData(data)      
+        ' Author
+        author = Split(data, """author"":{""name"":""")(1)
+        author = Split(author, """,")(0)
+        
+        ' Committer
+        cmmter = Split(data, """committer"":{""name"":""")(1)
+        cTime = Split(cmmter, """date"":""")(1)
+        cmmter = Split(cmmter, """,")(0)
+        
+        ' Commit Time
+        cTime = Split(cTime, """")(0)
+        
+        ' Commit Message
+        msg = Split(data, """message"":""")(1)
+        msg = Split(msg, """,""")(0)
+        msg = Split(msg, "\n")(0)
+        msg = Replace(msg, "\""", """")
+        
+        ' URL
+        url = Split(data, """html_url"":""")(1)
+        url = Split(url, """")(0)
+        
+        AuthorName = author
+        CommitterName = cmmter
+        Message = msg
+        CommitTime = cTime
+        HtmlUrl = url
+    End Sub
+    
+    ' Gets a string explaining the commit including the time it was made and a link to it.
+    Public Function GetInfo()
+        GetInfo = StringFormat("{0} made a commit to {1}/{2} on {3} UTC: {4} ({5})", _
+            CommitterName, RepoName, RepoBranch, Replace(Left(CommitTime, Len(CommitTime) - 1), "T", " @ "), Message, HtmlUrl)
+    End Function
+	
+    ' Gets a string explaining the commit with no time or URL
+	Public Function GetInfoShort()
+		GetInfoShort = StringFormat("{0} made a commit to {1}/{2}: {3}", CommitterName, RepoName, RepoBranch, Message)
+	End Function
+End Class
+
+' Stores information about a repository to be checked.
+Class CommitCheck
+    Public LastCommitTime
+    Public RepoOwner
+    Public RepoName
+    Public RepoBranch
+    
+    ' Parses a line from the watch file
+    '   <owner> <repo> <branch> [latest]
+    Public Sub ParseData(data)
+        s = Split(data, " ")
+        
+        If UBound(s) > 1 Then
+            RepoOwner = s(0)
+            RepoName = s(1)
+            RepoBranch = s(2)
+            
+            LastCommitTime = vbNullString
+        End If
+        
+        If UBound(s) > 2 Then
+            LastCommitTime = s(3)
+        End If
+        
+        'AddChat vbWhite, StringFormat("Parsed repo info: {0}/{1} branch {2}", RepoOwner, RepoName, RepoBranch)
+    End Sub
+    
+    ' Gets the data to be saved to a line in the watch file.
+    Public Function GetData()
+        GetData = StringFormat("{0} {1} {2}", RepoOwner, RepoName, RepoBranch)
+        If LenB(LastCommitTime) > 0 Then
+            GetData = GetData & Space(1) & LastCommitTime
+        End If
+    End Function
+    
+    ' Checks for new commits and outputs them
+    Public Sub CheckForCommits()
+        since = LastCommitTime
+        
+        ' If we've already checked this repo, take the time of the latest commit
+        '   and advance it by 1 second. Then use this time to only retreive commits
+        '   made since then.
+        If LenB(since) > 0 Then
+            secPart = CStr(Int(Right(Left(since, Len(since) - 1), 2)) + 1)
+            secPart = Right("00" & secPart, 2)
+                
+            since = Left(since, Len(since) - 3) & secPart & "Z"
+        End If
+        
+        c = GetCommitList(RepoOwner, RepoName, RepoBranch, since)
+        If InStr(c(0), "{") = 0 And InStr(c(0), "}") = 0 Then Exit Sub
+        
+        ' Create a dictionary to store contributing users.
+        Set dicComNames = CreateObject("Scripting.Dictionary")
+        
+        ' Figure out how to display them
+        IsFirstCheck = (LenB(LastCommitTime) = 0)
+        ShowEach = ((Not IsFirstCheck) And (UBound(c) < MaxCommits))
+        ShowReport = ((Not IsFirstCheck) And (UBound(c) >= MaxCommits))
+        
+        LastCommitTime = vbNullString
+        
+        ' Go through each commit
+        For Each commit in c
+            Set oC = New GitCommit
+            oC.RepoOwner = RepoOwner
+            oC.RepoName = RepoName
+            oC.RepoBranch = RepoBranch
+        
+            oC.ParseData commit
+            
+            ' Update the last commit time
+            If LenB(LastCommitTime) = 0 Then
+                LastCommitTime = oC.CommitTime
+                Call SaveChecks
+            End If
+            
+            ' Count commits by each user
+            If Not dicComNames.Exists(oC.CommitterName) Then
+                dicComNames.Add oC.CommitterName, 1
+            Else
+                dicComNames.Item(oC.CommitterName) = (dicComNames.Item(oC.CommitterName) + 1)
+            End If
+            
+            ' Show the commit if desired
+            If ShowEach Then
+                Dsp DisplayMode, oC.GetInfoShort, , vbGreen
+            End If
+        Next
+        
+        ' Show a general report of commits
+        If ShowReport Then
+            If dicComNames.Count > 2 Then
+                Dsp DisplayMode, StringFormat("{0} commits were pushed to {1}/{2} by {3} users.", _
+                    UBound(c) + 1, RepoName, RepoBranch, dicComNames.Count), , vbGreen
+            Else
+                For Each com In dicComNames.Keys
+                    Dsp DisplayMode, StringFormat("{0} pushed {1} commits to {2}/{3}.", _
+                        com, dicComNames.Item(com), RepoName, RepoBranch), , vbGreen
+                Next
+            End If
+        End If
+    End Sub
+End Class
