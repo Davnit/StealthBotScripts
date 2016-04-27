@@ -1,0 +1,15 @@
+Const EID_SHOWUSER = &H1                'User in channel
+Const EID_JOIN = &H2                    'User joined channel
+Const EID_LEAVE = &H3                   'User left channel
+Const EID_WHISPER = &H4                 'Whisper received
+Const EID_TALK = &H5                    'Chat message
+Const EID_BROADCAST = &H6               'Server broadcast
+Const EID_CHANNEL = &H7                 'Channel information
+Const EID_USERFLAGS = &H9               'Flag update
+Const EID_WHISPERSENT = &HA             'Sent whisper
+Const EID_CHANNELFULL = &HD             'Channel full
+Const EID_CHANNELDOESNOTEXIST = &HE     'Channel doesn't exist
+Const EID_CHANNELRESTRICTED = &HF       'Channel is restricted
+Const EID_INFO = &H12                   'Information
+Const EID_ERROR = &H13                  'Error message
+Const EID_EMOTE = &H17                  'Emote 

@@ -1,0 +1,256 @@
+#include "\sim\events.txt"
+#include "\sim\flags.txt"
+
+Script("Name") = "Simulate"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 1
+
+
+Const SIM_COMMAND = "sim"       ' The base command for simulating events
+Const SIM_EVENT = "event"       ' The event to simuate
+Const SIM_ARGS = "args"         ' Event parameters
+
+Sub Event_Load()
+    Call InitCommands       ' Make sure our commands are registered
+End Sub
+
+Sub Event_Command(Command)
+    Dim s, i
+    Dim args, msg
+    Dim oUsr
+    
+    'We only care about our one command.
+    If StrComp(Command.Name, SIM_COMMAND, vbTextCompare) <> 0 Then Exit Sub
+    If Not Command.IsValid Then 
+        Command.Respond StringFormat("Invalid simulation parameters. Syntax: {0} <event> [args]", Command.Name)
+        Exit Sub
+    End If
+    
+    ' Add padding so we get back empty indexes when arguments are omitted.
+    args = Command.Argument(SIM_ARGS) & Space(4)
+    
+    Select Case LCase(Command.Argument(SIM_EVENT))
+        Case "leave":           ' User leave: args => <username>
+            For Each oUsr In Channel.Users
+                If Match(oUsr.DisplayName, Command.Argument(SIM_ARGS), True) Then
+                    SimulateLeave oUsr.Name
+                End If
+            Next
+        Case "load":            ' Massload: args => <size> <base_name> [flags] [ping] [stats]
+            s = Split(args, " ", 5)
+            count = CLng(s(0))
+            For i = 1 To count
+                SimulateJoin IIf(i = 1, s(1), s(1) & "#" & i), s(2), s(4), s(3)
+            Next
+        Case "rejoin":          ' User rejoin (leave + join): args => <username>
+            args = Trim(args)
+            If Channel.GetUserIndex(args) > 0 Then
+                Set oUsr = Channel.GetUser(args)
+
+                SimulateLeave oUsr.Name
+                SimulateJoin oUsr.Name, oUsr.Flags, oUsr.Statstring, oUsr.Ping
+            Else
+                Command.Respond "That user is not in the channel."
+            End If
+        Case "ban", "kick":     ' Kick/ban: args => <target> <operator> [reason]
+            s = Split(args, " ", 3)
+            msg = StringFormat("{0} was {2} by {1}", s(0), s(1), _
+                IIf(LCase(Command.Argument(SIM_EVENT)) = "ban", "banned", "kicked out of the channel"))
+            msg = msg & IIf(Len(Trim(s(2))) > 0, " (" & Trim(s(2)) & ").", ".")
+            ForceBNCSPacketParse CreateChatEvent("info", s(1), 0, msg, 0).Data
+        Case "info", "error":   ' ServerInfo/Error: args => <message>
+            DoParsePacket CreateChatEvent(LCase(Command.Argument(SIM_EVENT)), Channel.Self.Name, Channel.Self.Flags, Trim(args), Channel.Self.Ping)
+        Case "icontest"
+            Dim w3cats, wcg, ico, j
+            w3cats = "HNUORD"
+            SimulateJoin "Peon", 0, "3RAW 1H3W 0", 0
+            For i = 1 To Len(w3cats)
+                If i < Len(w3cats) Then
+                    For j = 2 To 5
+                        ico = "3RAW " & CStr(j) & Mid(w3cats, i, 1) & "3W 0"
+                        SimulateJoin Replace(StrReverse(ico), " ", "_"), 0, ico, 0
+                    Next
+                End If
+                
+                For j = 2 To 6
+                    ico = "PX3W " & CStr(j) & Mid(w3cats, i, 1) & "3W 0"
+                    SimulateJoin Replace(StrReverse(ico), " ", "_"), 0, ico, 0
+                Next
+            Next
+            wcg = Array("RF", "PL", "GO", "SI", "BR", "PG")
+            For Each ico In wcg
+                SimulateJoin "WC" & ico, 0, "3RAW " & StrReverse(ico) & "CW 0", 0
+            Next
+        Case Else:              ' Misc chat events: args => [username] [flags] [ping] [message]
+            s = Split(args, " ", 4)
+            DoParsePacket CreateChatEvent(GetEventID(Command.Argument(SIM_EVENT)), s(0), s(1), s(3), s(2))
+    End Select
+End Sub
+
+Sub SimulateJoin(username, flags, message, ping)
+    DoParsePacket CreateChatEvent(EID_JOIN, username, flags, message, ping)
+End Sub
+
+Sub SimulateLeave(username)
+    DoParsePacket CreateChatEvent(EID_LEAVE, username, 0, vbNullString, 0)
+End Sub
+
+' Creates a BNCS packet using the specified data buffer 
+'   returns a data buffer object containing the entire packet including header
+Function CreateBNCSPacket(id, buffer)
+    Dim tBuff
+    
+    Set tBuff = DataBufferEx
+    tBuff.InsertByte &HFF       ' Protocol header
+    tBuff.InsertByte id         ' Packet ID
+    
+    ' Handle both data buffer objects and strings
+    If IsObject(buffer) Then
+        tBuff.InsertWord buffer.length + 4      ' packet length
+        tBuff.InsertNonNTString buffer.Data     ' packet data
+    Else
+        tBuff.InsertWord Len(buffer) + 4        ' packet length
+        tBuff.InsertNonNTString buffer          ' packet data
+    End If
+    
+    Set CreateBNCSPacket = tBuff
+End Function
+
+' Creates a chat event packet using the specified parameters
+Function CreateChatEvent(eventId, username, flags, message, ping)
+    Dim tBuff   ' Temporary packet buffer
+    
+    ' Check for string-based event ID
+    If Not IsNumeric(eventId) Then eventId = GetEventID(eventId)
+    
+    ' If flags are omitted use the default
+    If Len(flags) = 0 Then 
+        flags = 0
+    ElseIf Not IsNumeric(flags) Then
+        ' Check for string-based flags (example: op|squelched)
+        flags = GetFlags(flags)
+    End If    
+    
+    ' If ping is ommitted, use the default
+    If Len(ping) = 0 Then ping = -1
+    
+    ' Build the packet contents
+    Set tBuff = DataBufferEx
+    tBuff.InsertDWord CLng(eventId)             ' Event ID
+    tBuff.InsertDWord CLng(flags)               ' Flags
+    tBuff.InsertDWord CLng(ping)                ' Ping
+    tBuff.InsertDWord 0                         ' IP Address (defunct)
+    tBuff.InsertDWord 0                         ' Account number (defunct)
+    tBuff.InsertDWord 0                         ' Registration authority (defunct)
+    tBuff.InsertNTString CStr(username)         ' Username
+    tBuff.InsertNTString Trim(CStr(message))    ' Text
+    
+    ' Create a full BNCS packet from the data
+    Set CreateChatEvent = CreateBNCSPacket(&HF, tBuff)
+End Function
+
+Function GetEventID(eventArg)
+    Dim eDic
+    Set eDic = CreateObject("Scripting.Dictionary")
+    eDic.CompareMode = vbTextCompare
+    
+    eDic.Add "user", EID_SHOWUSER
+    eDic.Add "join", EID_JOIN
+    eDic.Add "leave", EID_LEAVE
+    eDic.Add "whisper", EID_WHISPER
+    eDic.Add "talk", EID_TALK
+    eDic.Add "broadcast", EID_BROADCAST
+    eDic.Add "channel", EID_CHANNEL
+    eDic.Add "flags", EID_USERFLAGS
+    eDic.Add "chanfull", EID_CHANNELFULL
+    eDic.Add "channoexist", EID_CHANNELDOESNOTEXIST
+    eDic.Add "chanrestrict", EID_CHANNELRESTRICTED
+    eDic.Add "info", EID_INFO
+    eDic.Add "error", EID_ERROR
+    eDic.Add "emote", EID_EMOTE
+    
+    If eDic.Exists(eventArg) Then
+        GetEventID = eDic.Item(eventArg)
+    Else
+        GetEventID = 0
+    End If
+End Function
+
+Function GetFlags(flagArg)
+    Dim eDic, s, i, f
+    Set eDic = CreateObject("Scripting.Dictionary")
+    eDic.CompareMode = vbTextCompare
+    
+    eDic.Add "blizzard", FLAG_BLIZZARD
+    eDic.Add "op", FLAG_OPERATOR
+    eDic.Add "speaker", FLAG_SPEAKER
+    eDic.Add "admin", FLAG_ADMIN
+    eDic.Add "udp", FLAG_UDP
+    eDic.Add "squelch", FLAG_SQUELCH
+    eDic.Add "guest", FLAG_GUEST
+    eDic.Add "reserved", FLAG_RESERVED
+    eDic.Add "beep", FLAG_BEEP
+    eDic.Add "pglplay", FLAG_PGLPALYER
+    eDic.Add "pgloff", FLAG_PGLOFFICIAL
+    eDic.Add "kbkplay", FLAG_KBKPLAYER
+    eDic.Add "wcgoff", FLAG_WCGOFFICIAL
+    eDic.ADd "kbksingle", FLAG_KBKSINGLE
+    eDic.Add "kbkbegin", FLAG_KBKBEGIN
+    eDic.Add "kbkwhite", FLAG_KBKWHITE
+    eDic.Add "gfoff", FLAG_GFOFFICIAL
+    eDic.Add "gfplay", FLAG_GFPLAYER
+    eDic.Add "pglplay2", FLAG_PGLPLAYER2
+    
+    ' Flags can be combined using pipes (example: op|squelch|udp)
+    s = Split(flagArg, "|")
+    If eDic.Exists(s(0)) Then
+        f = eDic.Item(s(0))
+    Else
+        f = 0
+    End If
+    
+    If UBound(s) > 0 Then
+        For i = 1 To UBound(s)
+            f = f Or CLng(IIf(eDic.Exists(s(i)), eDic.Item(s(i)), 0))
+        Next
+    End If
+    
+    GetFlags = f
+End Function
+
+' Returns t if exp is True, otherwise returns f
+Function IIf(exp, t, f)
+    If exp Then IIf = t Else IIf = f
+End Function
+
+' Forces the parsing of the specified packet data
+Sub DoParsePacket(pBuff)
+    ' Handle both data buffer objects and strings
+    If IsObject(pBuff) Then
+        ForceBNCSPacketParse pBuff.Data
+    Else
+        ForceBNCSPacketParse pBuff
+    End If
+End Sub
+
+' Registers script commands
+Sub InitCommands()
+    Dim objC, objP
+    If OpenCommand(SIM_COMMAND) Is Nothing Then
+        Set objC = CreateCommand(SIM_COMMAND)
+        With objC
+            Set objP = .NewParameter(SIM_EVENT, False, "word")
+            objP.Description = "The event to simulate."
+            .Parameters.Add objP
+            
+            Set objP = .NewParameter(SIM_ARGS, True, "string")
+            objP.Description = "Additional event arguments."
+            .Parameters.Add objP
+            
+            .Description = "Simulates server events"
+            .RequiredRank = -1
+            .Save
+        End With
+    End IF
+End Sub
