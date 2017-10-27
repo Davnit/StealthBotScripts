@@ -1,0 +1,59 @@
+' // This script reports the current status of Warden to a server which keeps track of multiple reports.
+' // Note that changes to Warden will not begin to affect the bot until it reconnects to the server, so
+' //   this data will not be 100% accurate.
+
+Script("Name") = "Warden Status"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 0
+
+Dim lastReport
+
+Const statusCommand = "wardenstatus"
+
+Sub Event_Load()   
+	Set cmd = OpenCommand(statusCommand)
+	If cmd Is Nothing Then
+		Set cmd = CreateCommand(statusCommand)
+		cmd.RequiredRank = 20
+		cmd.Description = "Reports the current status of Warden based on the last time a request was received."
+		cmd.IsEnabled = True
+        cmd.Save
+	End If
+End Sub
+
+Sub Event_Command(Command)
+	If Command.Name = statusCommand Then
+		last = GetSettingsEntry("lastReceived")
+		If last = vbNullString Then
+			Command.Respond "There is no record of a Warden packet being received by this bot."
+		Else
+			last = DateDiff("s", last, Now())
+			Command.Respond "A Warden packet was last received by this bot " & last & " seconds ago."
+		End If
+	End If
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+	If Protocol = "BNCS" Then
+		If ID = &H5E Then
+			If DateDiff("h", lastReport, Now()) > 24 Then
+				'scInet.OpenURL "http://toshley.net/py/wardenscan.php?pass=maiev&botname=" & BotVars.Username & "&realm=" & GetRealm()
+				AddChat vbRed, "Warden detected!"
+                lastReport = Now()
+			End If
+			WriteSettingsEntry "lastReceived", Now()
+		End If
+	End If
+End Sub
+
+Function GetRealm()
+	Select Case BotVars.Gateway
+		Case "Azeroth" 		: GetRealm = "USEast"
+		Case "Lordaeron" 	: GetRealm = "USWest"
+		Case "Northrend"	: GetRealm = "Europe"
+		Case "Kalimdor"		: GetRealm = "Asia"
+		Case Else
+			GetRealm = BotVars.Gateway
+	End Select
+End Function
