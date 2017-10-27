@@ -1,0 +1,167 @@
+Script("Name") = "DebugPackets"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 1
+
+' DEV VERSION NOT FOR RELEASE
+
+
+Const PROTOCOL_BNCS = "BNCS"
+Const BYTES_PER_LINE = 16
+Const TEXT_COLOR = 13408512
+
+Public Filters      ' array containing packet IDs to filter
+Public FilterMode   ' 0 = none, 1 = whitelist, 2 = blacklist, 3 = protocol
+
+Sub Event_Load()
+    Call InitUI()
+    
+    Filters = Array(&H0, &H25)
+    FilterMode = 0
+End Sub
+
+
+Sub Event_PacketReceived(Protocol, ID, Length, ByVal Data)
+    ShowPacket "RECV", Protocol, ID, Data
+End Sub
+
+Sub Event_PacketSent(Protocol, ID, Length, ByVal Data)
+    ShowPacket "SENT", Protocol, ID, Data
+End Sub
+
+Public Sub ShowPacket(Direction, Protocol, ID, ByVal Data)
+    If ID > &HFF Then
+        AddChat vbRed, "Error in ShowPacket(): Packet ID out of range (max 255)"
+        Exit Sub
+    End If
+    
+    Select Case FilterMode
+        Case 1  ' Whitelist
+            If Not CheckFilter(ID) Then Exit Sub
+        Case 2  ' Blacklist
+            If CheckFilter(ID) Then Exit Sub
+        Case 3  ' Protocol
+            If Not CheckFilter(Protocol) Then Exit Sub
+    End Select
+    
+    If ID >= 0 Then
+        pid = "0x" & ToHex(ID)
+    
+        summary = StringFormat("[{4}] {0} {1} PACKET {2} ({3} bytes)", Protocol, Direction, pid, Len(Data), Now())
+    Else
+        summary = StringFormat("[{4}] {0} {1} RAW {2} bytes", Protocol, Direction, Len(Data), Now())
+    End If
+    
+    With PacketLogForm.GetObjByName("rtbPackets")
+        .SelStart = Len(.Text)
+        .SelLength = 0
+        .SelColor = TEXT_COLOR
+        .SelText = vbCrLf & summary & vbCrLf & FormatPacket(Data)
+        
+        .SelStart = Len(.Text)
+        
+        If Len(.Text) > Config.MaxBacklogSize Then
+            .Text = Right(.Text, Config.MaxBacklogSize)
+            .Text = Mid(.Text, InStr(1, .Text, vbCrLf) + 2)
+            .SelStart = Len(.Text)
+        End If
+    End With
+End Sub
+
+Function CheckFilter(ID)
+    CheckFilter = False
+    If UBound(Filters) < 0 Then Exit Function
+    For i = 0 To UBound(Filters)
+        If Filters(i) = ID Then
+            CheckFilter = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Function FormatPacket(ByVal Data)
+    dLen = Len(Data)
+    If dLen = 0 Then
+        FormatPacket = "(no data)"
+        Exit Function
+    End If
+    
+    lineCount = Fix(dLen / BYTES_PER_LINE)
+    If dLen Mod BYTES_PER_LINE Then lineCount = lineCount + 1
+    
+    rVal = vbNullString
+    For i = 1 To lineCount
+        hx = vbNullString
+        tx = vbNullString
+        
+        For c = ((i - 1) * BYTES_PER_LINE) + 1 To i * BYTES_PER_LINE
+            If c <= dLen Then
+                b = Asc(Mid(Data, c, 1))
+                hx = hx & ToHex(b) & Space(1)
+                If b < &H20 Then
+                    tx = tx & "."
+                Else
+                    tx = tx & Chr(b)
+                End If
+            Else
+                hx = hx & Space(3)
+            End If
+            
+            If (c Mod &H8) = 0 Then
+                hx = hx & Space(1)
+                tx = tx & Space(1)
+            End If
+        Next
+        
+        ln = Hex(i - 1)
+        ln = Right("0000000", 7 - Len(ln)) & ln & "0"
+        rVal = rVal & ln & ":" & Space(3) & hx & Space(1) & tx & vbCrLf
+    Next
+    
+    FormatPacket = rVal
+End Function
+
+Function ToHex(x)
+    h = Hex(x)
+    ToHex = Right("00", 2 - Len(h)) & h
+End Function
+
+Sub InitUI()
+    CreateObj "Menu", "mnuShowLog"
+    mnuShowLog.Caption = "Show Packet Log"
+    
+    CreateObj "Form", "PacketLogForm"
+    With PacketLogForm        
+        With .CreateObj("RichTextBox", "rtbPackets")
+            .BackColor = &H000000
+            .Font = "Courier New"
+            .Locked = True
+            .TabIndex = 0
+            .Text = vbNullString
+            
+            .Left = 0
+            .Top = 0
+        End With
+        
+        
+        .Caption = "BNCS Packet Log"
+        .Width = 10000
+        .Height = 7500
+    End With
+End Sub
+
+Sub PacketLogForm_Resize()
+    With PacketLogForm
+        width = .ScaleWidth
+        height = .ScaleHeight
+        
+        With .GetObjByName("rtbPackets")
+            .Width = width
+            .Height = height
+        End With
+    End With
+End Sub
+
+Sub mnuShowLog_Click()
+    PacketLogForm.Show
+End Sub
