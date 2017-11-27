@@ -1,0 +1,232 @@
+Option Explicit
+
+Script("Name") = "Clan Info"
+Script("Author") = "Pyro"
+Script("Major") = 2
+Script("Minor") = 0
+
+Const CINFO_REQUEST_COMMAND = "ci"
+Const CINFO_REQUEST_TAGARG = "tag"
+Const CINFO_REQUEST_REALM = "realm"
+
+Sub Event_Load()
+	Dim C, P
+	If OpenCommand(CINFO_REQUEST_COMMAND) Is Nothing Then
+		Set C = CreateCommand(CINFO_REQUEST_COMMAND)
+		With C
+			Set P = .NewParameter(CINFO_REQUEST_TAGARG, False, "word")
+			With P
+				.Description = "The tag of the clan to get information on."
+				.MatchMessage = "\b[a-zA-Z0-9]{2,4}\b"
+				.MatchError = "Invalid clan tag specified. Clan tags are 2-4 alphanumeric characters."
+			End With
+			.Parameters.Add P
+			Set P = .NewParameter(CINFO_REQUEST_REALM, True, "word")
+			With P
+				.Description = "The realm on which the clan is on."
+				.MatchMessage = "[a-zA-Z]*"
+				.MatchError = "Invalid realm specified. Valid realms consist of only letters."
+			End With
+			.Parameters.Add P
+			Set P = Nothing
+			
+			.RequiredRank = 20
+			.Description = "Requests information on a clan."
+			.Save
+		End With
+		Set C = Nothing
+	End If
+End Sub
+
+Sub Event_Close()
+	If (Not (OpenCommand(CINFO_REQUEST_COMMAND) Is Nothing)) Then DeleteCommand CINFO_REQUEST_COMMAND
+End Sub
+
+Sub Event_Command(C)
+	If LCase(C.Name) = LCase(CINFO_REQUEST_COMMAND) Then
+		If C.IsValid Then
+			Dim sRealm, CI, strData, shamVar, Tag
+			Tag = C.Argument(CINFO_REQUEST_TAGARG)
+			
+			If C.Argument(CINFO_REQUEST_REALM) <> vbNullString Then
+				sRealm = C.Argument(CINFO_REQUEST_REALM)
+			Else
+				sRealm = GetRealm()
+			End If
+			
+			If sRealm = vbNullString Then
+				C.Respond "A realm could not be determined and no realm was specified."
+				Exit Sub
+			End If
+			
+			Select Case LCase(sRealm)
+				Case "azeroth", "east", "useast"
+					sRealm = "Azeroth"
+				Case "lordaeron", "west", "uswest"
+					sRealm = "Lordaeron"
+				Case "northrend", "europe"
+					sRealm = "Northrend"
+				Case "kalimdor", "asia"
+					sRealm = "Kalimdor"
+				Case Else
+					C.Respond Chr(34) & sRealm & Chr(34) & " is not a valid realm."
+					Exit Sub
+			End Select
+			
+			Set CI = GetClanInfo(Tag, sRealm)
+    
+			If CI.Exists Then
+				strData = "Clan " & CI.Tag & " @ " & CI.Realm & " [" & CI.Title & "] was created on " & CI.CreationDate & _
+                ", has " & CI.MemberCount & " members, and is currently under the command of " & CI.Chieftain
+				
+				If UBound(CI.Shamans) > 0 Then
+					strData = strData & " who is assisted by "
+					
+					For shamVar = 1 To UBound(CI.Shamans)
+						strData = strData & CI.Shamans(shamVar) & ", "
+						
+						If shamVar = UBound(CI.Shamans) - 1 Then
+							strData = strData & "and "
+						End If
+					Next
+					
+					strData = Left(strData, Len(strData) - 2) & "."
+				Else
+					strData = strData & "."
+				End If
+				
+				C.Respond strData
+			Else
+				Dim strError
+				Select Case CI.Tag
+					Case "still executing"
+						strError = "The bot is unable to process your request at this time, please try again later."
+					Case ""
+						strError = "There is no record available for clan " & Tag & " on " & sRealm & "."
+				End Select
+				
+				C.Respond strError
+			End If
+		End If
+	End If
+End Sub
+
+Function GetRealm()
+	Dim realm
+	realm = BotVars.Gateway
+	If realm = vbNullString Then
+		Dim iWc3
+		iWc3 = CBool((BotVars.Product = "3RAW") Or (BotVars.Product = "PX3W"))
+		Select Case Left(BotVars.Server, 7)
+			Case "63.240.", "useast." : realm = IIf(iWc3, "Azeroth", "USEast")
+			Case "63.241.", "uswest." : realm = IIf(iWc3, "Lordaeron", "USWest")
+			Case "213.248", "europe." : realm = IIf(iWc3, "Northrend", "Europe")
+			Case "211.233", "asia.ba" : realm = IIf(iWc3, "Kalimdor", "Asia")
+			Case Else : realm = "Unknown"	
+		End Select
+	End If
+	GetRealm = realm
+End Function
+
+Function IIf(c, a, b)
+	If c Then IIf = a Else IIf = b
+End Function
+
+Public Function GetClanInfo(Tag, sRealm)
+	Dim URLBase, cp, mp
+    Dim cShamans()
+
+    Select Case sRealm
+        Case "Azeroth", "Lordaeron", "Northrend"
+            URLBase = "http://classic.battle.net/war3/ladder/"
+        Case "Kalimdor"
+            URLBase = "http://asialadders.battle.net/war3/ladder/"
+    End Select
+    
+	CreateObj "Inet", "ciInet"
+    If ciInet.StillExecuting Then
+        Set GetClanInfo = new clsClanInfo
+        GetClanInfo.Exists = False
+        GetClanInfo.Tag = "still executing"
+        Exit Function
+    End If
+    
+    cp = ciInet.OpenURL(CStr(URLBase & "w3xp-clan-profile.aspx?Gateway=" & sRealm & "&ClanTag=" & Tag))
+    
+    ReDim cShamans(0)
+    
+    If Split(Split(cp, "<title>")(1), "</title>")(0) <> "Frozen Throne Ladder" Then
+		Dim cTitle, cCreationDate, cMemberCount, cMemberSplit, cChieftain, cTag
+		Dim memVar, cMemName, cRank
+        
+        cTitle = Trim(Split(Split(cp, "<title>")(1), " - ")(2))
+        
+        cCreationDate = Trim(Split(Split(Split(cp, "<span class=""rankingData"">Creation Date: <span ")(1), _
+                             ">")(1), " <")(0))
+        
+        cMemberCount = Int(Split(Split(Split(cp, "class = ""rankingHeader2"">Total Members:")(1), _
+                                """>")(2), " Players")(0))
+        
+        cMemberSplit = Split(cp, "<img src=""/war3/ladder/portraits/clans/rank")
+        
+        For memVar = 1 To UBound(cMemberSplit)
+            cMemName = Split(Split(Split(cMemberSplit(memVar), "<span class = ""rankingName"">")(1), _
+                                    """>")(1), "</a>")(0)
+            
+            cRank = Int(Split(cMemberSplit(memVar), ".gif")(0))
+            
+            If cRank = 4 Then
+                cChieftain = cMemName
+            ElseIf cRank = 3 Then
+                ReDim Preserve cShamans(UBound(cShamans) + 1)
+                cShamans(UBound(cShamans)) = cMemName
+            End If
+        Next
+        
+        mp = ciInet.OpenURL(CStr(URLBase & "w3xp-player-profile.aspx?Gateway=" & sRealm & "&PlayerName=" & cChieftain))
+        
+        cTag = Split(Split(Split(mp, "<span class=""rankingData"">Clan Name:")(1), _
+                                  "&ClanTag=")(1), """>")(0)
+
+		DestroyObj "ciInet"
+    Else
+		DestroyObj "ciInet"
+		
+        Set GetClanInfo = New clsClanInfo
+        GetClanInfo.Exists = False
+        GetClanInfo.Tag = ""
+        Exit Function
+    End If
+    
+    Set GetClanInfo = New clsClanInfo
+    
+    With GetClanInfo
+        .Exists = True
+        .Title = cTitle
+        .CreationDate = cCreationDate
+        .MemberCount = cMemberCount
+        .Chieftain = cChieftain
+        .SetShamans(cShamans)
+        .Tag = cTag
+        .Realm = sRealm
+    End With
+End Function
+
+Class clsClanInfo
+	Public Exists
+	Public Title
+	Public CreationDate
+	Public MemberCount
+	Public Chieftain
+	Public Shamans()
+	Public Tag
+	Public Realm
+	
+	Public Sub SetShamans(shams)
+		Dim sVar
+		ReDim Shamans(UBound(shams))
+		For sVar = 1 To UBound(shams)
+			Shamans(sVar) = shams(sVar)
+		Next
+	End Sub
+End Class

@@ -1,0 +1,264 @@
+Script("Name") = "Member Info"
+Script("Author") = "PyroManiac"
+Script("Major") = 1
+Script("Minor") = 0
+    
+'Requests information on a member of a clan.
+'This script uses Battle.net packets instead of the website, so it's better. ;p
+
+'REQUIRES DEV 38 OR HIGHER
+
+'Example: .mi Pyro[BoT]
+
+Public reqDic
+Public lastRequest
+Public lastRequestObj
+
+Sub Event_Load()
+	Set reqDic = CreateObject("Scripting.Dictionary")
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	If (Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger) And (Len(Message) > Len(BotVars.Trigger)) Then
+		ProcessCommand Username, Mid(Message, Len(BotVars.Trigger) + 1), 1
+	End If
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	If (Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger) And (Len(Message) > Len(BotVars.Trigger)) Then
+		ProcessCommand Username, Mid(Message, Len(BotVars.Trigger) + 1), 3
+	End If
+End Sub
+
+Sub ProcessCommand(Username, Message, Source)
+	s = Split(Message, " ")
+	If LCase(s(0)) = "mi" And UBound(s) > 0 Then
+		Set db = GetDBEntry(Username)
+		If db.Rank > 100 Then
+			RequestUserInfo s(1), Username, Source
+		End If
+	End If
+End Sub
+
+Sub RequestUserInfo(user, Requestee, Source)
+	If DateDiff("s", lastRequest, Now) < 30 Then
+		Dsp Source, MIPrefix(Source = 4) & "You must wait 30 seconds before issuing another profile request.", Requestee, vbRed
+		Exit Sub
+	End If
+	
+	e = False
+	For Each r In reqDic
+		If Match(user, r.Name, True) Then
+			e = True
+			Exit For
+		End If
+	Next
+	
+	If Not e Then
+		Set req = New ProfileRequest
+		req.Name = user
+		req.Cookie = GetNextRequestCookie()
+		req.Requestee = Requestee
+		req.RequestSource = Source
+		
+		req.Status = 1
+		
+		reqDic.Add req.Cookie, req
+		
+		RequestClanTag req.Name, req.Cookie
+		lastRequest = Now
+	Else
+		Dsp Source, MIPrefix(Source = 4) & "There is already an outstanding request for that user.", Requestee, vbRed
+	End If
+End Sub
+
+Sub GetUserInfo(name)
+	If DateDiff("s", lastRequest, Now) < 30 Then
+		AddChat vbRed, "[MI] You must wait 30 seconds before issuing another profile request."
+		Exit Sub
+	End If
+	
+	exists = False
+	For Each r In reqDic
+		If Match(r.Name, name, True) Then
+			exists = True
+			Exit For
+		End If
+	Next
+	
+	If Not exists Then
+		Set req = New ProfileRequest
+		req.Name = name
+		req.Cookie = GetNextRequestCookie()
+		
+		req.Requestee = "[console]"
+		req.RequestSource = 4
+		
+		req.Status = 1
+		
+		reqDic.Add req.Cookie, req
+		
+		RequestClanTag req.Name, req.Cookie
+		lastRequest = Now
+		
+		AddChat vbYellow, "[MI] Requesting clan information on " & req.Name & " ..."
+	Else
+		AddChat vbRed, "[MI] There is already an outstanding request for that user."
+	End If
+End Sub
+
+Function GetNextRequestCookie()
+	x = 0
+	Do
+		If Not reqDic.Exists(x) Then
+			GetNextRequestCookie = x
+			Exit Function
+		End If
+		x = x + 1
+	Loop			
+End Function
+
+Function MIPrefix(c)
+	If c Then MIPrefix = "[MI] " Else MIPrefix = vbNullString
+End Function
+
+Sub RequestClanTag(name, cookie)
+	DataBuffer.InsertDWORD cookie
+	DataBuffer.InsertNTString CStr(name)
+	DataBuffer.SendPacket &H35
+End Sub
+
+Sub RequestClanMemberInfo(name, tag, cookie)
+	DataBuffer.InsertDWORD cookie	
+	DataBuffer.InsertDWORD tag
+	DataBuffer.InsertNTString CStr(name)
+	DataBuffer.SendPacket &H82
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+	If Protocol = "BNCS" Then		
+		If ID = &H35 Then
+			Set pak = DataBufferEx()
+			pak.Data = Data
+			pak.Position = 4
+			
+			Set req = Nothing
+			
+			cookie = pak.GetDWORD
+			status = pak.GetByte
+			
+			If reqDic.Exists(cookie) Then
+				Set req = reqDic(cookie)
+			End If
+			
+			If status = &H0 Then
+				pDes = pak.GetString
+				pLoc = pak.GetString
+				dTag = pak.GetDWORD
+				
+				If dTag = &H0 Then 
+					req.Status = 7
+					Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & req.Name & " is not in a clan.", req.Requestee, vbRed
+					reqDic.Remove req.Cookie
+					Exit Sub
+				End If
+				
+				hTag = Hex(dTag)				
+				sTag = vbNullString
+				For x = 1 To (4 * 2) Step 2
+					i = Int("&H" & Mid(hTag, x, 2))
+					If i <> 0 Then
+						sTag = sTag & Chr(i)
+					End If
+				Next
+				
+				If Not req Is Nothing Then
+					req.ClanTag = sTag
+					req.Status = 2
+					RequestClanMemberInfo req.Name, dTag, req.Cookie
+				End If
+			Else
+				req.Status = 8
+				Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & "A profile could not be retreived for " & req.Name & ".", req.Requestee, vbRed
+				reqDic.Remove req.Cookie
+				Exit Sub
+			End If
+		End If
+		
+		If ID = &H82 Then
+			Set pak = DataBufferEx()
+			pak.Data = Data
+			pak.Position = 4
+
+			Set req = Nothing
+			
+			cookie = pak.GetDWORD
+			status = pak.GetByte
+			
+			If reqDic.Exists(cookie) Then
+				Set req = reqDic(cookie)
+			End If
+			
+			If status = &H0 Then
+				req.ClanName = pak.GetString
+				req.ClanRankByte = pak.GetByte
+				
+				joinedA = pak.GetDWORD
+				joinedB = pak.GetDWORD
+				
+				req.ClanJoinDate = FileTimeToDate(CStr(joinedB) & Space(1) & CStr(joinedA))
+				
+				If Not req Is Nothing Then
+					req.Status = 3
+					dt = Split(req.ClanJoinDate, " ")
+					Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & req.Name & " is a " & req.ClanRank & _
+										   " in Clan " & req.ClanName & " [Tag: " & req.ClanTag & "]. He/she joined the clan on " & _
+										   dt(0) & " at " & dt(1) & Space(1) & dt(2) & ".", req.Requestee, vbGreen
+					reqDic.Remove req.Cookie
+				End If
+			Else
+				req.Status = 6
+				Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & "No information is available on " & req.Name & ".", req.Requestee, vbRed
+				reqDic.Remove req.Cookie
+			End If
+			
+			Set lastRequestObj = req
+		End If
+	End If
+End Sub
+
+Class ProfileRequest
+	Private requestStartTime
+	
+	Private Sub Class_Initialize()
+		requestStartTime = Now
+	End Sub
+	
+	Public Name
+	Public Cookie
+	
+	Public Status
+	Public Requestee
+	Public RequestSource
+	
+	Public ClanTag
+	Public ClanName
+	Public ClanRankByte
+	Public ClanJoinDate
+	
+	Public Property Get ClanRank
+		Select Case ClanRankByte
+			Case &H0: ClanRank = "Peon (on probation)"
+			Case &H1: ClanRank = "Peon"
+			Case &H2: ClanRank = "Grunt"
+			Case &H3: ClanRank = "Shaman"
+			Case &H4: ClanRank = "Chieftain"
+			Case Else:
+				ClanRank = "Unknown (0x" & Right("00" & Hex(ClanRankByte), 2) & ")"
+		End Select
+	End Property
+	
+	Public Property Get RequestTime
+		RequestTime = DateDiff("s", requestStartTime, Now)
+	End Property
+End Class
