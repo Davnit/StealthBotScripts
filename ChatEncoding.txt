@@ -1,18 +1,29 @@
 Script("Name") = "Chat Encoding"
 Script("Author") = "Pyro"
-Script("Major") = 0
-Script("Minor") = 3
+Script("Major") = 1
+Script("Minor") = 0
 Script("Description") = "Allows sending and receiving messages in various encoded formats."
 
 
 Const EVENT_PROCESSOR_SCRIPT = "Chat Event Pre-Processor"
 
+Const ENCODE_COMMAND = "encode"
+Const DECODE_COMMAND = "decode"
+Const ENCODE_CHAT_COMMAND = "cencode"
+Const ENCODE_LIST_COMMAND = "encodings"
+
 Public AvailableEncodings
 
 Private SetupCompleted
+Private UTF8Menu
+Private TempUTF8
 
 Sub Event_Load()
     SetupCompleted = False
+    
+    ' This sets us up for a hack to allow us to temporarily disable UTF8 encoding.
+    CreateObj "Winsock", "HackSocket"
+    Set UTF8Menu = HackSocket.Parent.mnuUTF8
     
     If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then
         AddChat Color.Red, "[ENC] Error: The script '" & EVENT_PROCESSOR_SCRIPT & "' could not be found."
@@ -21,12 +32,49 @@ Sub Event_Load()
     
     Set AvailableEncodings = CreateObject("Scripting.Dictionary")
     With AvailableEncodings
+        .CompareMode = vbTextCompare
+        
         .Add "HEX", New HexEncoding
         .Add "ROT13", New Rot13Encoding
         .Add "ROT47", New Rot47Encoding
         .Add "INVIG", New InvigorationEncoding
         .Add "BASE64", New Base64Encoding
     End With
+    
+    Call InitCommands
+End Sub
+
+Sub Event_Command(Command)
+    If Not SetupCompleted Then
+        Call Setup()
+    End If
+    
+    If Command.Name = ENCODE_LIST_COMMAND Then
+        list = vbNullString
+        For Each Encoding In AvailableEncodings.Items()
+            list = list & Encoding.ShortID & ", "
+        Next
+        list = Left(list, Len(list) - 2)
+        Command.Respond "Available encodings: " & list
+    Else
+        Encoding = Command.Argument("encoding")
+        Message = Command.Argument("text")
+    
+        If Not AvailableEncodings.Exists(Encoding) Then
+            Command.Respond StringFormat("Unrecognized encoding: {0}.", Encoding)
+            Exit Sub
+        End If
+        
+        Set oEncoding = AvailableEncodings.Item(Encoding)
+        Select Case Command.Name
+            Case ENCODE_COMMAND
+                Command.Respond StringFormat("{0} encoded: {1}", oEncoding.ShortID, oEncoding.Encode(Message))
+            Case DECODE_COMMAND
+                Command.Respond StringFormat("{0} decoded: {1}", oEncoding.ShortID, oEncoding.Decode(Message))
+            Case ENCODE_CHAT_COMMAND
+                Call SendInternal(oEncoding, Message)
+        End Select
+    End If
 End Sub
 
 Sub Event_Close()
@@ -43,6 +91,22 @@ Public Sub Event_PacketReceived(Protocol, ID, Length, Data)
     End If
 End Sub
 
+Public Sub Event_MessageSent(MessageID, Message, Tag)
+    If Left(Tag, 8) = "Encoded " Then
+        Config.UseUTF8 = TempUTF8
+        UTF8Menu.Checked = TempUTF8
+        
+        Encoding = Split(Tag, " ")(1)
+        If AvailableEncodings.Exists(Encoding) Then
+            Set oEncoding = AvailableEncodings.Item(Encoding)
+            DecodedMessage = oEncoding.Decode(Mid(Message, 2))
+            If Len(DecodedMessage) > 0 Then
+                AddChat Color.Red, "[ENC-" & oEncoding.ShortID & "] ", Color.Carats, "<", Color.TalkBotUsername, Channel.Self.Name, appColor.Carats, "> ", Color.TalkNormalText, DecodedMessage
+            End If
+        End If
+    End If
+End Sub
+
 Public Sub Event_ChatEventReceived(EventID, Flags, Ping, IP, Account, RegAuth, Username, Message)
     If EventID <> &H5 Then Exit Sub
     If Len(Message) < 2 Then Exit Sub
@@ -53,7 +117,7 @@ Public Sub Event_ChatEventReceived(EventID, Flags, Ping, IP, Account, RegAuth, U
             DecodedMessage = Encoding.Decode(Mid(Message, 2))
             
             If Len(DecodedMessage) > 0 Then
-                VetoThisMEssage
+                VetoThisMessage
                 AddChat Color.Red, "[ENC-" & Encoding.ShortID & "] ", Color.Carats, "<", Color.TalkUsernameNormal, Username, Color.Carats, "> ", Color.TalkNormalText, DecodedMessage
             End If
         End If
@@ -65,7 +129,16 @@ Public Sub Send(ID, Message)
     If Not AvailableEncodings.Exists(ID) Then Exit Sub
     
     Set Encoding = AvailableEncodings(ID)
-	AddQ Encoding.MessageIndicator & Encoding.Encode(Message)
+	Call SendInternal(Encoding, Message)
+End Sub
+
+Private Sub SendInternal(Encoding, Message)
+    If Encoding Is Nothing Then Exit Sub
+    
+    TempUTF8 = Config.UseUTF8
+    Config.UseUTF8 = False
+    UTF8Menu.Checked = False
+    AddQ Encoding.MessageIndicator & Encoding.Encode(Message), -1, "Encoded " & Encoding.ShortID
 End Sub
 
 Public Sub TestEncoding(ID, Message)
@@ -96,6 +169,41 @@ Sub Setup()
     SetupCompleted = True
 End Sub
 
+Sub InitCommands()
+    Call InitEncodingCommand(ENCODE_COMMAND, "Encodes the specified text.", 20, "G")
+    Call InitEncodingCommand(DECODE_COMMAND, "Decodes the specified text.", 20, "G")
+    Call InitEncodingCommand(ENCODE_CHAT_COMMAND, "Sends a message using the specified encoding.", 60, "T")
+    
+    If OpenCommand(ENCODE_LIST_COMMAND) Is Nothing Then
+        Set cmd = CreateCommand(ENCODE_LIST_COMMAND)
+        With cmd
+            .Description = "Lists the available chat encodings."
+            .RequiredRank = 20
+            .RequiredFlags = "G"
+            .Save
+        End With
+    End If
+End Sub
+
+Sub InitEncodingCommand(CommandName, Description, Rank, Flags)
+    If OpenCommand(CommandName) Is Nothing Then
+        Set cmd = CreateCommand(CommandName)
+        With cmd
+            Set param = .NewParameter("encoding", False, "word")
+            param.Description = "The encoding to use."
+            .Parameters.Add param
+            
+            Set param = .NewParameter("text", False, "string")
+            param.Description = "The text to be encoded or decoded."
+            .Parameters.Add param
+            
+            .Description = Description
+            .RequiredRank = Rank
+            .RequiredFlags = Flags
+            .Save
+        End With
+    End If
+End Sub
 
 Class HexEncoding
     Public ShortID
