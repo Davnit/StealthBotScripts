@@ -1,7 +1,7 @@
 Script("Name") = "Chat Encoding"
 Script("Author") = "Pyro"
 Script("Major") = 0
-Script("Minor") = 2
+Script("Minor") = 3
 Script("Description") = "Allows sending and receiving messages in various encoded formats."
 
 
@@ -25,6 +25,7 @@ Sub Event_Load()
         .Add "ROT13", New Rot13Encoding
         .Add "ROT47", New Rot47Encoding
         .Add "INVIG", New InvigorationEncoding
+        .Add "BASE64", New Base64Encoding
     End With
 End Sub
 
@@ -204,5 +205,84 @@ Class InvigorationEncoding
         For i = 1 To Len(Combine) Step 3
             Decode = Decode & Chr(Mid(Combine, i, 3))
         Next
+    End Function
+End Class
+
+Class Base64Encoding
+    Public ShortID
+    Public MessageIndicator
+    
+    Private B64
+    
+    Public Sub Class_Initialize()
+        ShortID = "BASE64"
+        MessageIndicator = Chr(&HE6)
+        
+        B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"  
+    End Sub
+    
+    Public Function Encode(Text)
+        For i = 1 To Len(Text) Step 3
+            group = &H10000 * Asc(Mid(Text, i, 1)) + &H100 * SafeAsc(Mid(Text, i + 1, 1)) + SafeAsc(Mid(Text, i + 2, 1))
+            group = Oct(group)
+            group = String(8 - Len(group), "0") & group
+            
+            out = Mid(B64, CLng("&o" & Mid(group, 1, 2)) + 1, 1) + _
+                  Mid(B64, CLng("&o" & Mid(group, 3, 2)) + 1, 1) + _
+                  Mid(B64, CLng("&o" & Mid(group, 5, 2)) + 1, 1) + _
+                  Mid(B64, CLng("&o" & Mid(group, 7, 2)) + 1, 1)
+                  
+            Encode = Encode & out
+        Next
+        
+        Select Case Len(Text) Mod 3
+            Case 1: Encode = Left(Encode, Len(Encode) - 2) + "=="
+            Case 2: Encode = Left(Encode, Len(Encode) - 1) + "="
+        End Select
+    End Function
+    
+    Public Function Decode(Text)
+        Text = Replace(Text, " ", "")
+        
+        If length Mod 4 <> 0 Then
+            AddChat Color.Red, "[ENC-" & ShortID & "] Invalid base64 string: ", Color.Orange, Text
+            Exit Function
+        End If
+        
+        For i = 1 To Len(Text) Step 4
+            numBytes = 3
+            group = 0
+            
+            For cnt = 0 To 3
+                c = Mid(Text, i + cnt, 1)
+                
+                If c = "=" Then
+                    numBytes = numBytes - 1
+                    d = 0
+                Else
+                    d = InStr(1, B64, c, vbBinaryCompare) - 1
+                End If
+                
+                If d = -1 Then
+                    AddChat Color.Red, "[ENC-" & ShortID & "] Invalid character in base64 string: ", Color.Orange, c
+                    Exit Function
+                End If
+                
+                group = 64 * group + d
+            Next
+            
+            group = Hex(group)
+            group = String(6 - Len(group), "0") & group
+            
+            out = Chr(CByte("&H" & Mid(group, 1, 2))) + _
+                  Chr(CByte("&H" & Mid(group, 3, 2))) + _
+                  Chr(CByte("&H" & Mid(group, 5, 2)))
+                  
+            Decode = Decode & Left(out, numBytes)
+        Next
+    End Function
+    
+    Private Function SafeAsc(c)
+        If c = "" Then SafeAsc = 0 Else SafeAsc = Asc(c)
     End Function
 End Class
