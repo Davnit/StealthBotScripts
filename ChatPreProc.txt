@@ -1,0 +1,68 @@
+Option Explicit
+
+Script("Name") = "Chat Event Pre-Processor"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 3
+Script("Description") = "Provides a mechanism for chat events to be dispatched to scripts prior to internal processing."
+
+' This script allows other scripts to get advanced notice of chat events and VETO them if needed,
+'   without having to manually decode the event packets in each script.
+
+
+Public EventRegister
+
+Public Sub Register(ScriptName)
+    If EventRegister Is Nothing Then Exit Sub
+    
+    If Not EventRegister.Exists(ScriptName) Then
+        EventRegister.Add ScriptName, ScriptName
+    End If
+End Sub
+
+Public Sub Unregister(ScriptName)
+    If EventRegister Is Nothing Then Exit Sub
+    
+    If EventRegister.Exists(ScriptName) Then
+        EventRegister.Remove ScriptName
+    End If
+End Sub
+
+Sub Event_Load()
+    Set EventRegister = CreateObject("Scripting.Dictionary")
+End Sub
+
+Sub Event_Close()
+    Set EventRegister = Nothing
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+    If EventRegister Is Nothing Then Exit Sub
+    
+    ' If nobody has registered to receive the event, there is no point in continuing.
+    If EventRegister.Count = 0 Then Exit Sub
+    
+    ' We are only interested in BNCS packet 0x0F (SID_CHATEVENT)
+    If Protocol <> "BNCS" Or ID <> &HF Then Exit Sub
+    
+    Dim Buffer, EventID, Flags, Ping, IP, Account, RegAuth, Username, Message
+    Set Buffer = DataBufferEx()
+    Buffer.Data = Data
+    Buffer.GetDWord     ' Packet header
+    
+    EventID = Buffer.GetDWord()    
+    Flags = Buffer.GetDWord()
+    Ping = Buffer.GetDWord()
+    IP = Buffer.GetDWord()
+    Account = Buffer.GetDWord()
+    RegAuth = Buffer.GetDWord()
+    Username = Buffer.GetString()
+    Message = Buffer.GetString()
+    
+    Dim RegisteredName
+    On Error Resume Next
+    For Each RegisteredName In EventRegister.Items()
+        Call Scripts(RegisteredName).Event_ChatEventReceived(EventID, Flags, Ping, IP, Account, RegAuth, Username, Message)
+    Next
+End Sub
+

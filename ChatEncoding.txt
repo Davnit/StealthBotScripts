@@ -1,0 +1,208 @@
+Script("Name") = "Chat Encoding"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 2
+Script("Description") = "Allows sending and receiving messages in various encoded formats."
+
+
+Const EVENT_PROCESSOR_SCRIPT = "Chat Event Pre-Processor"
+
+Public AvailableEncodings
+
+Private SetupCompleted
+
+Sub Event_Load()
+    SetupCompleted = False
+    
+    If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then
+        AddChat Color.Red, "[ENC] Error: The script '" & EVENT_PROCESSOR_SCRIPT & "' could not be found."
+        Exit Sub
+    End If
+    
+    Set AvailableEncodings = CreateObject("Scripting.Dictionary")
+    With AvailableEncodings
+        .Add "HEX", New HexEncoding
+        .Add "ROT13", New Rot13Encoding
+        .Add "ROT47", New Rot47Encoding
+        .Add "INVIG", New InvigorationEncoding
+    End With
+End Sub
+
+Sub Event_Close()
+    If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then Exit Sub
+    
+    Call Scripts(EVENT_PROCESSOR_SCRIPT).Unregister(Script("Name"))
+    
+    Set AvailableEncodings = Nothing
+End Sub
+
+Public Sub Event_PacketReceived(Protocol, ID, Length, Data)
+    If Not SetupCompleted Then
+        Call Setup()
+    End If
+End Sub
+
+Public Sub Event_ChatEventReceived(EventID, Flags, Ping, IP, Account, RegAuth, Username, Message)
+    If EventID <> &H5 Then Exit Sub
+    If Len(Message) < 2 Then Exit Sub
+    
+    IsEncoded = False
+    For Each Encoding In AvailableEncodings.Items()
+        If Left(Message, 1) = Encoding.MessageIndicator Then
+            DecodedMessage = Encoding.Decode(Mid(Message, 2))
+            
+            If Len(DecodedMessage) > 0 Then
+                VetoThisMEssage
+                AddChat Color.Red, "[ENC-" & Encoding.ShortID & "] ", Color.Carats, "<", Color.TalkUsernameNormal, Username, Color.Carats, "> ", Color.TalkNormalText, DecodedMessage
+            End If
+        End If
+    Next
+End Sub
+
+
+Public Sub Send(ID, Message)
+    If Not AvailableEncodings.Exists(ID) Then Exit Sub
+    
+    Set Encoding = AvailableEncodings(ID)
+	AddQ Encoding.MessageIndicator & Encoding.Encode(Message)
+End Sub
+
+Public Sub TestEncoding(ID, Message)
+    If Not AvailableEncodings.Exists(ID) Then Exit Sub
+    
+    Set Encoding = AvailableEncodings(ID)
+    AddChat Color.Red, "[ENC-" & Encoding.ShortID & "] ", Color.Orange, "Input: " & Message
+    
+    EncodedMessage = Encoding.Encode(Message)
+    AddChat Color.Red, "[ENC-" & Encoding.ShortID & "] ", Color.Orange, "Encoded: " & EncodedMessage
+    
+    Output = Encoding.Decode(EncodedMessage)
+    AddChat Color.Red, "[ENC-" & Encoding.ShortID & "] ", Color.Orange, "Output: " & Output
+    
+    IsMatch = CBool(Message = Output)
+    AddChat Color.Red, "[ENC-" & Encoding.ShortID & "] ", IIf(IsMatch, Color.Green, Color.Yellow), "Success: " & CStr(IsMatch)
+End Sub
+
+Function PadLeft(str, c, i)
+	PadLeft = Right(String(i, c) & str, i)
+End Function
+
+Sub Setup()
+    If SetupCompleted = True Then Exit Sub
+    
+    If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then Exit Sub
+    Call Scripts(EVENT_PROCESSOR_SCRIPT).Register(Script("Name"))
+    SetupCompleted = True
+End Sub
+
+
+Class HexEncoding
+    Public ShortID
+    Public MessageIndicator
+    
+    Public Sub Class_Initialize()
+        ShortID = "HEX"
+        MessageIndicator = Chr(&HA3)
+    End Sub
+    
+    Public Function Encode(Text)
+        Encode = vbNullString
+        For i = 1 To Len(Text)
+            Encode = Encode & LCase(PadLeft(CStr(Hex(Asc(Mid(Text, i, 1)))), "0", 2))
+        Next
+    End Function
+    
+    Public Function Decode(Text)
+        Text = Replace(Text, Space(1), vbNullString)
+        
+        Decode = vbNullString
+        For i = 1 To Len(Text) Step 2
+            Decode = Decode & Chr("&H" & Mid(Text, i, 2))
+        Next
+    End Function
+End Class
+
+Class Rot13Encoding
+    Public ShortID
+    Public MessageIndicator
+    
+    Public Sub Class_Initialize()
+        ShortID = "ROT13"
+        MessageIndicator = Chr(&HA5)
+    End Sub
+    
+    Public Function Encode(Text)
+        Encode = vbNullString
+        For i = 1 To Len(Text)
+            val = Asc(Mid(Text, i, 1))
+            If ((val > 64 And val < 78) Or (val > 96 And val < 110)) Then Encode = Encode & Chr(val + 13)
+            If ((val > 77 And val < 90) Or (val > 108 And val < 123)) Then Encode = Encode & Chr(val - 13)
+        Next
+    End Function
+    
+    Public Function Decode(Text)
+        Decode = Encode(Text)
+    End Function
+End Class
+
+Class Rot47Encoding
+    Public ShortID
+    Public MessageIndicator
+    
+    Public Sub Class_Initialize()
+        ShortID = "ROT47"
+        MessageIndicator = Chr(&HA6)
+    End Sub
+    
+    Public Function Encode(Text)
+        Encode = vbNullString
+        For i = 1 To Len(Text)
+            val = Asc(Mid(Text, i, 1))
+            If val >= 33 And k <= 126 Then
+                Encode = Encode & Chr(33 + ((val + 14) Mod 94))
+            Else
+                Encode = Encode & Chr(val)
+            End If
+        Next
+    End Function
+    
+    Public Function Decode(Text)
+        Decode = Encode(Text)
+    End Function
+End Class
+
+Class InvigorationEncoding
+    Public ShortID
+    Public MessageIndicator
+    
+    Public Sub Class_Initialize()
+        ShortID = "INVIG"
+        MessageIndicator = Chr(&H95)
+    End Sub
+    
+    Public Function Encode(Text)
+        Combine = vbNullString
+	
+        For i = 1 To Len(Text)
+            Combine = Combine & PadLeft(CStr(Asc(Mid(Text, i, 1))), "0", 3)
+        Next
+	
+        Encode = vbNullString
+        For i = 1 To Len(Combine)
+            Encode = Encode & Chr(Asc(Mid(Combine, i, 1)) + 101)
+        Next
+    End Function
+    
+    Public Function Decode(Text)
+    	Combine = vbNullString
+	
+        For i = 1 To Len(Text)
+            Combine = Combine & Chr(Asc(Mid(Text, i, 1)) - 101)
+        Next
+	
+        Decode = vbNullString
+        For i = 1 To Len(Combine) Step 3
+            Decode = Decode & Chr(Mid(Combine, i, 3))
+        Next
+    End Function
+End Class
