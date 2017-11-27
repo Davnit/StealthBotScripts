@@ -1,7 +1,7 @@
 Script("Name") = "GitHub Watcher"
 Script("Author") = "Pyro"
 Script("Major") = 1
-Script("Minor") = 0
+Script("Minor") = 1
 
 ' Command constants
 Const GW_COMMAND = "gitwatch"   ' Name of the command
@@ -11,6 +11,7 @@ Const GW_REPO = "repo"          ' second parameter name
 ' Global variables
 Public RepoChecks       ' The list of repositories to check (as CommitCheck objects)
 Public CheckIndex       ' The current position in the repo list
+Public DisplayQueue     ' List of messages needing short links.
 
 ' Settings
 Public WatchFile        ' The name of the file containing the watch list
@@ -24,10 +25,17 @@ Sub Event_Load()
     Call LoadSettings
     
     CreateObj "Inet", "gitInet"         ' Used for querying the GitHub API
+    CreateObj "Inet", "gitShortUrl"     ' Used to get short URL's for commits.
     
     CreateObj "LongTimer", "gitTime"    ' Checks for new commits
     gitTime.Interval = CheckInterval
     gitTime.Enabled = True
+    
+    CreateObj "Timer", "gitQueue"       ' Display queue timer
+    gitQueue.Interval = 1000
+    gitQueue.Enabled = False
+    
+    Set DisplayQueue = CreateObject("Scripting.Dictionary")
     
     'Loads watch list from the file
     Call LoadChecks
@@ -182,6 +190,25 @@ Function GetCommitList(owner, repo, branch, since)
     GetCommitList = cList
 End Function
 
+Sub QueueForShortUrl(Message, LongUrl)
+    Set Request = New ShortUrlRequest
+    Request.Message = Message
+    Request.LongUrl = LongUrl
+    
+    DisplayQueue.Add Message, Request
+    
+    gitQueue.Enabled = True
+End Sub
+
+Sub RequestShortUrl(Request)
+    gitShortUrl.Tag = Request.Message
+    gitShortUrl.Execute "https://git.io", "POST", "url=" & Request.LongUrl
+    
+    If DisplayQueue.Exists(Request.Message) Then
+        Call DisplayQueue.Remove(Request.Message)
+    End If
+End Sub
+
 Sub gitTime_Timer()
     If RepoChecks.Count = 0 Then Exit Sub       ' Exit if there are no repositories to check
     If gitInet.StillExecuting Then Exit Sub     ' Exit if the INET object is busy
@@ -202,6 +229,32 @@ Sub gitTime_Timer()
         ' More to check
         If gitTime.Interval <> CheckInterval Then
             gitTime.Interval = CheckInterval
+        End If
+    End If
+End Sub
+
+Sub gitQueue_Timer()
+    ' If there's nothing queued, stop the timer.
+    If DisplayQueue.Count < 1 Then
+        gitQueue.Enabled = False
+        Exit Sub
+    End If
+    
+    ' Only proceed if the last request has finished.
+    If gitShortUrl.StillExecuting Then Exit Sub
+    
+    Set Request = DisplayQueue.Items()(0)
+    Call RequestShortUrl(Request)
+End Sub
+
+Sub gitShortUrl_StateChanged(State)
+    If State = 12 Then  ' icResponseCompleted
+        Message = gitShortUrl.Tag
+        Response = Split(gitShortUrl.GetHeader(vbNullString), vbNewLine)(0)
+        shortUrl = gitShortUrl.GetHeader("Location")
+
+        If InStr(Response, "201 Created") > 0 Then
+            Dsp DisplayMode, StringFormat("{0} - {1}", Message, shortUrl), , vbGreen
         End If
     End If
 End Sub
@@ -400,21 +453,30 @@ Class CommitCheck
             
             ' Show the commit if desired
             If ShowEach Then
-                Dsp DisplayMode, oC.GetInfoShort, , vbGreen
+                Call QueueForShortUrl(oC.GetInfoShort(), oC.HtmlUrl)
             End If
         Next
         
         ' Show a general report of commits
         If ShowReport Then
             If dicComNames.Count > 2 Then
-                Dsp DisplayMode, StringFormat("{0} commits were pushed to {1}/{2} by {3} users.", _
-                    UBound(c) + 1, RepoName, RepoBranch, dicComNames.Count), , vbGreen
+                Call QueueForShortUrl( _
+                    StringFormat("{0} commits were pushed to {1}/{2} by {3} users.", _
+                        UBound(c) + 1, RepoName, RepoBranch, dicComNames.Count), _
+                    StringFormat("https://github.com/{0}/{1}/commits/{2}", RepoOwner, RepoName, RepoBranch))
             Else
                 For Each com In dicComNames.Keys
-                    Dsp DisplayMode, StringFormat("{0} pushed {1} commits to {2}/{3}.", _
-                        com, dicComNames.Item(com), RepoName, RepoBranch), , vbGreen
+                    Call QueueForShortUrl( _
+                        StringFormat("{0} pushed {1} commits to {2}/{3}.", com, dicComNames.Item(com), RepoName, RepoBranch), _
+                        StringFormat("https://github.com/{0}/{1}/commits/{2}", RepoOwner, RepoName, RepoBranch))
                 Next
             End If
         End If
     End Sub
+End Class
+
+Class ShortUrlRequest
+    Public Message
+    Public LongUrl
+    Public ShortUrl
 End Class
