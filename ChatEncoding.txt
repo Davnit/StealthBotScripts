@@ -101,7 +101,7 @@ Public Sub Event_MessageSent(MessageID, Message, Tag)
             Set oEncoding = AvailableEncodings.Item(Encoding)
             DecodedMessage = oEncoding.Decode(Mid(Message, 2))
             If Len(DecodedMessage) > 0 Then
-                AddChat Color.Red, "[ENC-" & oEncoding.ShortID & "] ", Color.Carats, "<", Color.TalkBotUsername, Channel.Self.Name, appColor.Carats, "> ", Color.TalkNormalText, DecodedMessage
+                AddChat Color.Red, "[ENC-" & oEncoding.ShortID & "] ", Color.Carats, "<", Color.TalkBotUsername, Channel.Self.Name, Color.Carats, "> ", Color.TalkNormalText, DecodedMessage
             End If
         End If
     End If
