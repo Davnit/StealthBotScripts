@@ -14,13 +14,11 @@ Const ENCODE_LIST_COMMAND = "encodings"
 
 Public AvailableEncodings
 
-Private SetupCompleted
 Private UTF8Menu
 Private TempUTF8
 
+
 Sub Event_Load()
-    SetupCompleted = False
-    
     ' This sets us up for a hack to allow us to temporarily disable UTF8 encoding.
     CreateObj "Winsock", "HackSocket"
     Set UTF8Menu = HackSocket.Parent.mnuUTF8
@@ -41,14 +39,12 @@ Sub Event_Load()
         .Add "BASE64", New Base64Encoding
     End With
     
+    Call ObserveScript(EVENT_PROCESSOR_SCRIPT)
+    
     Call InitCommands
 End Sub
 
-Sub Event_Command(Command)
-    If Not SetupCompleted Then
-        Call Setup()
-    End If
-    
+Sub Event_Command(Command)   
     If Command.Name = ENCODE_LIST_COMMAND Then
         list = vbNullString
         For Each Encoding In AvailableEncodings.Items()
@@ -78,18 +74,9 @@ Sub Event_Command(Command)
 End Sub
 
 Sub Event_Close()
-    If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then Exit Sub
-    
-    Call Scripts(EVENT_PROCESSOR_SCRIPT).Unregister(Script("Name"))
-    
     Set AvailableEncodings = Nothing
 End Sub
 
-Public Sub Event_PacketReceived(Protocol, ID, Length, Data)
-    If Not SetupCompleted Then
-        Call Setup()
-    End If
-End Sub
 
 Public Sub Event_MessageSent(MessageID, Message, Tag)
     If Left(Tag, 8) = "Encoded " Then
@@ -161,13 +148,6 @@ Function PadLeft(str, c, i)
 	PadLeft = Right(String(i, c) & str, i)
 End Function
 
-Sub Setup()
-    If SetupCompleted = True Then Exit Sub
-    
-    If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then Exit Sub
-    Call Scripts(EVENT_PROCESSOR_SCRIPT).Register(Script("Name"))
-    SetupCompleted = True
-End Sub
 
 Sub InitCommands()
     Call InitEncodingCommand(ENCODE_COMMAND, "Encodes the specified text.", 20, "G")
