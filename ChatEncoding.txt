@@ -14,15 +14,10 @@ Const ENCODE_LIST_COMMAND = "encodings"
 
 Public AvailableEncodings
 
-Private UTF8Menu
 Private TempUTF8
 
 
 Sub Event_Load()
-    ' This sets us up for a hack to allow us to temporarily disable UTF8 encoding.
-    CreateObj "Winsock", "HackSocket"
-    Set UTF8Menu = HackSocket.Parent.mnuUTF8
-    
     If Scripts(EVENT_PROCESSOR_SCRIPT) Is Nothing Then
         AddChat Color.Red, "[ENC] Error: The script '" & EVENT_PROCESSOR_SCRIPT & "' could not be found."
         Exit Sub
@@ -81,7 +76,6 @@ End Sub
 Public Sub Event_MessageSent(MessageID, Message, Tag)
     If Left(Tag, 8) = "Encoded " Then
         Config.UseUTF8 = TempUTF8
-        UTF8Menu.Checked = TempUTF8
         
         Encoding = Split(Tag, " ")(1)
         If AvailableEncodings.Exists(Encoding) Then
@@ -124,7 +118,6 @@ Private Sub SendInternal(Encoding, Message)
     
     TempUTF8 = Config.UseUTF8
     Config.UseUTF8 = False
-    UTF8Menu.Checked = False
     AddQ Encoding.MessageIndicator & Encoding.Encode(Message), -1, "Encoded " & Encoding.ShortID
 End Sub
 
