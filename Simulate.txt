@@ -4,19 +4,30 @@
 Script("Name") = "Simulate"
 Script("Author") = "Pyro"
 Script("Major") = 0
-Script("Minor") = 1
+Script("Minor") = 2
 
 
 Const SIM_COMMAND = "sim"       ' The base command for simulating events
 Const SIM_EVENT = "event"       ' The event to simuate
 Const SIM_ARGS = "args"         ' Event parameters
 
+Private dicEventIDs
+Private dicFlags
+
 Sub Event_Load()
     Call InitCommands       ' Make sure our commands are registered
+    
+    Set dicEventIDs = BuildEventDictionary()
+    Set dicFlags = BuildFlagDictionary()
+End Sub
+
+Sub Event_Close()
+    Set dicEventIDs = Nothing
+    Set dicFlags = Nothing
 End Sub
 
 Sub Event_Command(Command)
-    Dim s, i
+    Dim s, i, arr
     Dim args, msg
     Dim oUsr
     
@@ -44,14 +55,22 @@ Sub Event_Command(Command)
                 SimulateJoin IIf(i = 1, s(1), s(1) & "#" & i), s(2), s(4), s(3)
             Next
         Case "rejoin":          ' User rejoin (leave + join): args => <username>
-            args = Trim(args)
-            If Channel.GetUserIndex(args) > 0 Then
-                Set oUsr = Channel.GetUser(args)
-
-                SimulateLeave oUsr.Name
-                SimulateJoin oUsr.Name, oUsr.Flags, oUsr.Statstring, oUsr.Ping
-            Else
-                Command.Respond "That user is not in the channel."
+            ReDim tUsers(0)
+            For Each oUsr In Channel.Users
+                If Match(oUsr.DisplayName, Command.Argument(SIM_ARGS), True) Then
+                    If Not Match(oUsr.Name, Channel.Self.Name, False) Then
+                        Set tUsers(UBound(tUsers)) = oUsr
+                        ReDim Preserve tUsers(UBound(tUsers) + 1)
+                    
+                        SimulateLeave oUsr.Name
+                    End If
+                End If
+            Next
+            
+            If UBound(tUsers) > 0 Then
+                For i = 0 To UBound(tUsers) - 1
+                    SimulateJoin tUsers(i).Name, tUsers(i).Flags, tUsers(i).Statstring, tUsers(i).Ping
+                Next
             End If
         Case "ban", "kick":     ' Kick/ban: args => <target> <operator> [reason]
             s = Split(args, " ", 3)
@@ -61,27 +80,68 @@ Sub Event_Command(Command)
             ForceBNCSPacketParse CreateChatEvent("info", s(1), 0, msg, 0).Data
         Case "info", "error":   ' ServerInfo/Error: args => <message>
             DoParsePacket CreateChatEvent(LCase(Command.Argument(SIM_EVENT)), Channel.Self.Name, Channel.Self.Flags, Trim(args), Channel.Self.Ping)
-        Case "icontest"
-            Dim w3cats, wcg, ico, j
-            w3cats = "HNUORD"
-            SimulateJoin "Peon", 0, "3RAW 1H3W 0", 0
-            For i = 1 To Len(w3cats)
-                If i < Len(w3cats) Then
-                    For j = 2 To 5
-                        ico = "3RAW " & CStr(j) & Mid(w3cats, i, 1) & "3W 0"
-                        SimulateJoin Replace(StrReverse(ico), " ", "_"), 0, ico, 0
+        Case "icontest"         ' Tests icons: args => <icon_type>
+            Select Case Trim(LCase(args))
+                Case "flags"
+                    For Each s In dicFlags.Keys()
+                        SimulateJoin s, dicFlags(s), vbNullString, 0
                     Next
-                End If
+                Case "products"
+                    arr = Array("STAR", "SEXP", "SSHR", "JSTR", "DRTL", "DSHR", "W2BN", "D2DV", "D2XP", "WAR3", "W3XP", "CHAT")
+                    For Each s In arr
+                        SimulateJoin s, 0, StrReverse(s), 0
+                    Next
+                Case "d1", "drtl", "dshr", "diablo", "diablo1"
+                    Dim cc, dots
+                    arr = Array("Warrior", "Rogue", "Sorcerer")
+                    For cc = 0 To 2
+                        For dots = 0 To 3
+                            SimulateJoin arr(cc) & "_" & dots & "d", 0, StringFormat("LTRD 0 {0} {1} 0 0 0 0 0 0", cc, dots), 0
+                        Next
+                    Next
+                    SimulateJoin "D1_Spawn", 0, "LTRD 0 0 0 0 0 0 0 0 1", 0
+                Case "sc", "star", "sexp", "starcraft"
+                    For i = 0 To 10
+                        SimulateJoin "STAR_" & i, 0, "RATS 0 0 " & i & " 0 0 0 0 0 RATS", 0
+                    Next
+                    SimulateJoin "STAR_Spawn", 0, "RATS 0 0 0 1 0 0 0 0 RATS", 0
+                    SimulateJoin "JSTR_Spawn", 0, "RTSJ 0 0 0 1 0 0 0 0 RTSJ", 0
+                Case "w2", "war2", "w2bn", "warcraft2"
+                    For i = 0 To 10
+                        SimulateJoin "W2BN_ " & i, 0, "NB2W 0 0 " & i & " 0 0 0 0 0 NB2W", 0
+                    Next
+                    SimulateJoin "W2BN_Spawn", 0, "NB2W 0 0 0 1 0 0 0 0 NB2W", 0
+                Case "d2", "d2dv", "d2xp", "diablo2"
+                    SimulateJoin "D2_Open", 0, "VD2D", 0 ' open character
+                    
+                    arr = Array("Amazon", "Sorceress", "Necromancer", "Paladin", "Barbarian", "Druid", "Assassin")
+                    For i = 1 To 7
+                        s = "VD2DSomeRealm," & arr(i - 1) & "," & Chr(&H84) & Chr(&H80) & String(11, Chr(&HFF)) & Chr(i) & _
+                            String(11, Chr(&HFF)) & Chr(&H1) & Chr(&H4) & Chr(&H80) & String(5, Chr(&HFF))
+                        SimulateJoin arr(i - 1), 0, s, 0
+                    Next
+                Case "w3", "war3", "w3xp", "warcraft3"
+                    Dim w3cats, wcg, ico, j
+                    w3cats = "HNUORD"
+                    SimulateJoin "Peon", 0, "3RAW 1H3W 0", 0
+                    For i = 1 To Len(w3cats)
+                        If i < Len(w3cats) Then
+                            For j = 2 To 5
+                                ico = "3RAW " & CStr(j) & Mid(w3cats, i, 1) & "3W 0"
+                                SimulateJoin Replace(StrReverse(ico), " ", "_"), 0, ico, 0
+                            Next
+                        End If
                 
-                For j = 2 To 6
-                    ico = "PX3W " & CStr(j) & Mid(w3cats, i, 1) & "3W 0"
-                    SimulateJoin Replace(StrReverse(ico), " ", "_"), 0, ico, 0
-                Next
-            Next
-            wcg = Array("RF", "PL", "GO", "SI", "BR", "PG")
-            For Each ico In wcg
-                SimulateJoin "WC" & ico, 0, "3RAW " & StrReverse(ico) & "CW 0", 0
-            Next
+                        For j = 2 To 6
+                            ico = "PX3W " & CStr(j) & Mid(w3cats, i, 1) & "3W 0"
+                            SimulateJoin Replace(StrReverse(ico), " ", "_"), 0, ico, 0
+                        Next
+                    Next
+                    wcg = Array("RF", "PL", "GO", "SI", "BR", "PG")
+                    For Each ico In wcg
+                        SimulateJoin "WC" & ico, 0, "3RAW " & StrReverse(ico) & "CW 0", 0
+                    Next
+            End Select
         Case Else:              ' Misc chat events: args => [username] [flags] [ping] [message]
             s = Split(args, " ", 4)
             DoParsePacket CreateChatEvent(GetEventID(Command.Argument(SIM_EVENT)), s(0), s(1), s(3), s(2))
@@ -94,6 +154,10 @@ End Sub
 
 Sub SimulateLeave(username)
     DoParsePacket CreateChatEvent(EID_LEAVE, username, 0, vbNullString, 0)
+End Sub
+
+Sub SimulateFlagUpdate(username, flags, message, ping)
+    DoParsePacket CreateChatEvent(EID_USERFLAGS, username, flags, message, ping)
 End Sub
 
 ' Creates a BNCS packet using the specified data buffer 
@@ -151,72 +215,80 @@ Function CreateChatEvent(eventId, username, flags, message, ping)
 End Function
 
 Function GetEventID(eventArg)
-    Dim eDic
-    Set eDic = CreateObject("Scripting.Dictionary")
-    eDic.CompareMode = vbTextCompare
-    
-    eDic.Add "user", EID_SHOWUSER
-    eDic.Add "join", EID_JOIN
-    eDic.Add "leave", EID_LEAVE
-    eDic.Add "whisper", EID_WHISPER
-    eDic.Add "talk", EID_TALK
-    eDic.Add "broadcast", EID_BROADCAST
-    eDic.Add "channel", EID_CHANNEL
-    eDic.Add "flags", EID_USERFLAGS
-    eDic.Add "chanfull", EID_CHANNELFULL
-    eDic.Add "channoexist", EID_CHANNELDOESNOTEXIST
-    eDic.Add "chanrestrict", EID_CHANNELRESTRICTED
-    eDic.Add "info", EID_INFO
-    eDic.Add "error", EID_ERROR
-    eDic.Add "emote", EID_EMOTE
-    
-    If eDic.Exists(eventArg) Then
-        GetEventID = eDic.Item(eventArg)
+    If dicEventIDs.Exists(eventArg) Then
+        GetEventID = dicEventIDs.Item(eventArg)
     Else
         GetEventID = 0
     End If
 End Function
 
 Function GetFlags(flagArg)
-    Dim eDic, s, i, f
-    Set eDic = CreateObject("Scripting.Dictionary")
-    eDic.CompareMode = vbTextCompare
-    
-    eDic.Add "blizzard", FLAG_BLIZZARD
-    eDic.Add "op", FLAG_OPERATOR
-    eDic.Add "speaker", FLAG_SPEAKER
-    eDic.Add "admin", FLAG_ADMIN
-    eDic.Add "udp", FLAG_UDP
-    eDic.Add "squelch", FLAG_SQUELCH
-    eDic.Add "guest", FLAG_GUEST
-    eDic.Add "reserved", FLAG_RESERVED
-    eDic.Add "beep", FLAG_BEEP
-    eDic.Add "pglplay", FLAG_PGLPALYER
-    eDic.Add "pgloff", FLAG_PGLOFFICIAL
-    eDic.Add "kbkplay", FLAG_KBKPLAYER
-    eDic.Add "wcgoff", FLAG_WCGOFFICIAL
-    eDic.ADd "kbksingle", FLAG_KBKSINGLE
-    eDic.Add "kbkbegin", FLAG_KBKBEGIN
-    eDic.Add "kbkwhite", FLAG_KBKWHITE
-    eDic.Add "gfoff", FLAG_GFOFFICIAL
-    eDic.Add "gfplay", FLAG_GFPLAYER
-    eDic.Add "pglplay2", FLAG_PGLPLAYER2
+    Dim s, i, f
     
     ' Flags can be combined using pipes (example: op|squelch|udp)
     s = Split(flagArg, "|")
-    If eDic.Exists(s(0)) Then
-        f = eDic.Item(s(0))
+    If dicFlags.Exists(s(0)) Then
+        f = dicFlags.Item(s(0))
     Else
         f = 0
     End If
     
     If UBound(s) > 0 Then
         For i = 1 To UBound(s)
-            f = f Or CLng(IIf(eDic.Exists(s(i)), eDic.Item(s(i)), 0))
+            f = f Or CLng(IIf(dicFlags.Exists(s(i)), dicFlags.Item(s(i)), 0))
         Next
     End If
     
     GetFlags = f
+End Function
+
+Function BuildEventDictionary()
+    Set BuildEventDictionary = CreateObject("Scripting.Dictionary")
+    With BuildEventDictionary
+        .CompareMode = vbTextCompare
+    
+        .Add "user", EID_SHOWUSER
+        .Add "join", EID_JOIN
+        .Add "leave", EID_LEAVE
+        .Add "whisper", EID_WHISPER
+        .Add "talk", EID_TALK
+        .Add "broadcast", EID_BROADCAST
+        .Add "channel", EID_CHANNEL
+        .Add "flags", EID_USERFLAGS
+        .Add "chanfull", EID_CHANNELFULL
+        .Add "channoexist", EID_CHANNELDOESNOTEXIST
+        .Add "chanrestrict", EID_CHANNELRESTRICTED
+        .Add "info", EID_INFO
+        .Add "error", EID_ERROR
+        .Add "emote", EID_EMOTE
+    End With    
+End Function
+
+Function BuildFlagDictionary()
+    Set BuildFlagDictionary = CreateObject("Scripting.Dictionary")
+    With BuildFlagDictionary
+        .CompareMode = vbTextCompare
+    
+        .Add "blizzard", FLAG_BLIZZARD
+        .Add "op", FLAG_OPERATOR
+        .Add "speaker", FLAG_SPEAKER
+        .Add "admin", FLAG_ADMIN
+        .Add "udp", FLAG_UDP
+        .Add "squelch", FLAG_SQUELCH
+        .Add "guest", FLAG_GUEST
+        .Add "reserved", FLAG_RESERVED
+        .Add "beep", FLAG_BEEP
+        .Add "pglplay", FLAG_PGLPALYER
+        .Add "pgloff", FLAG_PGLOFFICIAL
+        .Add "kbkplay", FLAG_KBKPLAYER
+        .Add "wcgoff", FLAG_WCGOFFICIAL
+        .ADd "kbksingle", FLAG_KBKSINGLE
+        .Add "kbkbegin", FLAG_KBKBEGIN
+        .Add "kbkwhite", FLAG_KBKWHITE
+        .Add "gfoff", FLAG_GFOFFICIAL
+        .Add "gfplay", FLAG_GFPLAYER
+        .Add "pglplay2", FLAG_PGLPLAYER2
+    End With
 End Function
 
 ' Returns t if exp is True, otherwise returns f
