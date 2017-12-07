@@ -1,0 +1,52 @@
+Script("Name") = "GeoIP Lookup"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 1
+Script("Description") = "Looks up the geographic information associated with an IP address or DNS name."
+
+Const LOOKUP_COMMAND = "geoip"
+Const LOOKUP_HOSTPARAM = "host"
+
+Sub Event_Load()
+    Call InitCommands()
+End Sub
+
+Sub Event_Command(Command)
+    If Not Command.Name = LOOKUP_COMMAND Then Exit Sub
+    
+    host = Command.Argument(LOOKUP_HOSTPARAM)
+    If Len(host) < 1 Then
+        Command.Respond "You must specify a hostname to lookup."
+        Exit Sub
+    End If
+    
+    data = scInet.OpenURL(StringFormat("http://freegeoip.net/xml/{0}", host))
+    
+    Set geoData = CreateObject("Scripting.Dictionary")
+    lines = Split(data, vbLf)
+    For i = 1 TO 11
+        geoData.Add Split(Split(lines(i), "<")(1), ">")(0), Split(Split(lines(i), ">")(1), "</")(0) 
+    Next
+
+    Command.Respond StringFormat("{0} ({1}) is located in {2}, {3} ({4})", _
+        host, geoData("IP"), geoData("City"), geoData("RegionCode"), geoData("CountryName"))
+End Sub
+
+Sub InitCommands()
+    Set cmd = OpenCommand(LOOKUP_COMMAND)
+    If cmd Is Nothing Then
+        Set cmd = CreateCommand(LOOKUP_COMMAND)
+        With cmd
+            .RequiredRank = 10
+            .RequiredFlags = "G"
+            .Description = "Performs a DNS lookup on a host."
+            
+            Set param = .NewParameter(LOOKUP_HOSTPARAM, False, "word")
+            param.Description = "The hostname to lookup."
+            .Parameters.Add param
+            
+            .Save
+        End With
+        Set cmd = Nothing
+    End If
+End Sub
