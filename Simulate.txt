@@ -71,7 +71,10 @@ Sub Event_Command(Command)
             
             If UBound(tUsers) > 0 Then
                 For i = 0 To UBound(tUsers) - 1
-                    SimulateJoin tUsers(i).Name, tUsers(i).Flags, tUsers(i).Statstring, tUsers(i).Ping
+                    SimulateJoin tUsers(i).Name, tUsers(i).Flags And (FLAG_SQUELCH Or FLAG_UDP), tUsers(i).Statstring, tUsers(i).Ping
+                    If (tUsers(i).Flags And (Not FLAG_SQUELCH And Not FLAG_UDP)) <> 0 Then
+                        SimulateFlagUpdate  tUsers(i).Name, tUsers(i).Flags, tUsers(i).Statstring, tUsers(i).Ping
+                    End If
                 Next
             End If
         Case "ban", "kick":     ' Kick/ban: args => <target> <operator> [reason]
