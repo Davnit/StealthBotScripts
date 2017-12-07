@@ -1,0 +1,376 @@
+Script("Name") = "IRC"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 1
+Script("Description") = "Allows StealthBot to connect to an IRC network."
+
+Const IRC_COMMAND = "irc"
+Const IRC_CMD_SUB = "subcmd"
+Const IRC_CMD_ARGS = "args"
+
+Const IRC_FOCUS_CMD = "if"
+Const IRC_FOCUS_ARGS = "args"
+
+Public ClientSettings
+Public FocusChannel
+Public MyNickname
+
+Private sckIRC
+Private ReceiveBuffer
+Private ReceivedWelcome
+
+Sub Event_Load()
+    CreateObj "Winsock", "sckIRC"
+    
+    Call InitCommands()
+    
+    Call InitSettings()
+    Set ClientSettings = New IrcSettings
+    Call ClientSettings.Read()
+    
+    If ClientSettings.AutoConnect And ClientSettings.CanConnect Then
+        Call Connect(ClientSettings.Server, ClientSettings.Port)
+    End If    
+End Sub
+
+Sub Event_Command(Command)
+    Select Case Command.Name
+        Case IRC_COMMAND
+            args = Split(Command.Argument(IRC_CMD_ARGS))
+            Select Case LCase(Command.Argument(IRC_CMD_SUB))
+                Case "connect"
+                    If UBound(args) = 0 Then args = Split(args(0), ":")
+                    
+                    Call Connect(args(0), IIf(UBound(args) > 0, Int(args(1)), 6667))
+                Case "disconnect"
+                    sckIRC.Close
+                Case "send"
+                    args = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
+                    If UBound(args) = 0 Then
+                        Command.Respond "You must specify a channel to send to."
+                    Else
+                        Send "PRIVMSG " & args(0) & " :" & args(1)
+                    End If
+                Case "join"
+                    Send "JOIN " & args(0)
+                Case "part"
+                    args = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
+                    Send "PART " & args(0) & IIf(UBound(args) > 0, " :" & args(1), vbNullString)
+                Case "focus"
+                    FocusChannel = args(0)
+                    Command.Respond "Set IRC focus channel to: " & FocusChannel                        
+            End Select
+        Case IRC_FOCUS_CMD
+            If FocusChannel = vbNullString Then
+                Command.Respond "You must set a focus channel using the 'irc focus <channel>' command."
+            Else
+                If Len(Command.Argument(IRC_FOCUS_ARGS)) = 0 Then
+                    Command.Respond "You must specify a message to send."
+                Else
+                    Send "PRIVMSG " & FocusChannel & " :" & Command.Argument(IRC_FOCUS_ARGS)
+                End If
+            End If
+    End Select
+End Sub
+
+Sub Connect(RemoteHost, RemotePort)
+    With sckIRC
+        .RemoteHost = RemoteHost
+        .RemotePort = RemotePort
+        
+        AddChat Color.Orange, "[IRC] ", Color.Yellow, StringFormat("Connecting to {0} ...", RemoteHost)
+        .Connect
+    End With
+End Sub
+
+Function IsConnected()
+    IsConnected = CBool(sckIRC.State = 7)   ' sckConnected
+End Function
+
+Sub Login(Nickname, Username, RealName)
+    If Nickname = vbNullString Then Exit Sub
+    If Username = vbNullString Then Username = Nickname
+    If RealName = vbNullString Then RealName = Nickname
+    
+    Send "NICK " & Nickname
+    Send "USER " & Username & " * * :" & RealName
+End Sub
+
+
+Sub Send(Message)
+    If IsConnected() Then
+        If Len(Message) > 510 Then
+            AddChat Color.Orange, "[IRC] ", Color.Red, "Error: Max message length exceeded. Unable to send."
+            Exit Sub
+        End If
+        
+        sckIRC.SendData Message & vbCrLf
+        
+        If Left(Message, 7) = "PRIVMSG" Then
+            parts = Split(Message, Space(1), 3)
+            chanName = parts(1)
+            text = parts(2)
+            If Left(text, 1) = ":" Then text = Mid(text, 2)
+            
+            AddChat Color.Orange, "[IRC] ", Color.TalkNormalText, chanName & ": ", Color.Carats, "<", Color.TalkBotUsername, MyNickname, Color.Carats, "> ", Color.TalkNormalText, text
+        End If
+    End If
+End Sub
+
+Sub ProcessIrcMessage(MessageText)
+    Set objMsg = New IrcMessage
+    objMsg.Parse MessageText
+    
+    If Not ReceivedWelcome Then
+        If objMsg.Command <> "001" Then Exit Sub
+        ReceivedWelcome = True
+    End If
+    
+    Select Case objMsg.Command
+        Case "001"
+            MyNickname = objMsg.Parameters(0)
+            If Len(ClientSettings.AutoJoinChannels) > 0 Then
+                Send "JOIN " & ClientSettings.AutoJoinChannels
+            End If
+        Case "PING"
+            Send "PONG " & objMsg.Parameters(0)
+        Case "PRIVMSG"
+            otherNick = GetNick(objMsg.Prefix)
+            chanName = objMsg.Parameters(0)
+            text = objMsg.Parameters(1)
+            
+            If chanName = MyNickname Then
+                AddChat Color.Orange, "[IRC] ", Color.WhisperCarats, "<From: ", Color.WhisperUsernames, otherNick, Color.WhisperCarats, "> ", Color.WhisperText, text
+            Else
+                AddChat Color.Orange, "[IRC] ", Color.TalkNormalText, chanName & ": ", Color.Carats, "<", Color.TalkUsernameNormal, otherNick, Color.Carats, "> ", Color.TalkNormalText, text
+            End If
+        Case "NICK"
+            If GetNick(objMsg.Prefix) = MyNickname Then
+                MyNickname = objMsg.Parameters(0)
+                AddChat Color.Orange, "[IRC] ", Color.Yellow, "You are now known as: " & MyNickname
+            End If
+        Case "JOIN"
+            If GetNick(objMsg.Prefix) = MyNickname Then
+                AddChat Color.Orange, "[IRC] ", Color.JoinedChannelText, "-- Joined channel: ", Color.JoinedChannelName, objMsg.Parameters(0), Color.JoinedChannelText, " --"
+                If ClientSettings.AutoSetFocus = True Then
+                    FocusChannel = objMsg.Parameters(0)
+                End If
+            End If
+        Case Else
+            ignored = Array("002", "003", "004", "005", "250", "251", "252", "253", "254", "255", "265", "266", "332", "333", "375", "372", "376")
+            For Each cmd In ignored
+                If objMsg.Command = cmd Then Exit Sub
+            Next
+            
+            If ClientSettings.DebugMode > 0 Then
+                AddChat Color.Orange, "[IRC] ", Color.Cyan, "MSG: ", Color.White, StringFormat("({0}): {1} => '{2}'", objMsg.Prefix, objMsg.Command, Join(objMsg.Parameters, "', '"))
+            End If
+    End Select
+End Sub
+
+Function GetNick(Prefix)
+    GetNick = Split(Prefix, "!")(0)
+End Function
+
+Sub sckIRC_Connect()
+    AddChat Color.Orange, "[IRC] ", Color.Green, "Connected!"
+    
+    ReceivedWelcome = False
+    MyNickname = vbNullString
+    FocusChannel = vbNullString
+    Call Login(ClientSettings.Nickname, ClientSettings.Username, ClientSettings.RealName)        
+End Sub
+
+Sub sckIRC_Close()
+    AddChat Color.Orange, "[IRC] ", Color.Red, "Disconnected."
+End Sub
+
+Sub sckIRC_DataArrival(TotalBytes)
+    ' Read the new data
+    Data = vbNullString
+    sckIRC.GetData Data, vbString, TotalBytes
+    
+    ' Append the new data to the receive buffer
+    ReceiveBuffer = ReceiveBuffer & Data
+    
+    ' Split up all of the messages from the receive buffer
+    Messages = Split(ReceiveBuffer, vbCrLf)
+    For i = 0 To (UBound(Messages) - 1)
+        Call ProcessIrcMessage(Messages(i))
+    Next
+    
+    ' Set the receive buffer to whatever is left
+    ReceiveBuffer = Messages(UBound(Messages))
+End Sub
+
+
+Sub InitSettings()
+    a = Array( _
+        "AutoConnect", False, _
+        "Server", vbNullString, _
+        "Port", 6667, _
+        "Nickname", vbNullString, _
+        "Username", vbNullString, _
+        "RealName", "stealthbot.net", _
+        "Password", vbNullString, _
+        "AutoJoinChannels", "#stealthbot", _
+        "AutoSetFocus", True, _
+        "DebugMode", "0" _
+    )
+    
+    For i = 0 To UBound(a) Step 2
+        If GetSettingsEntry(a(i)) = vbNullString Then
+            WriteSettingsEntry a(i), a(i + 1)
+        End If
+    Next
+End Sub
+
+Sub InitCommands()
+    Set cmd = OpenCommand(IRC_COMMAND)
+    If cmd Is Nothing Then
+        Set cmd = CreateCommand(IRC_COMMAND)
+        With cmd
+            cmd.RequiredRank = -1
+            cmd.Description = "Controls the IRC client."
+            
+            .Parameters.Add .NewParameter(IRC_CMD_SUB, False, "word")
+            .Parameters.Add .NewParameter(IRC_CMD_ARGS, True, "string")
+            
+            .Save
+        End With
+        Set cmd = Nothing
+    End If
+    
+    Set cmd = OpenCommand(IRC_FOCUS_CMD)
+    If cmd Is Nothing Then
+        Set cmd = CreateCommand(IRC_FOCUS_CMD)
+        With cmd
+            cmd.RequiredRank = -1
+            cmd.Description = "Sends a message to the focused IRC channel."
+            
+            .Parameters.Add .NewParameter(IRC_FOCUS_ARGS, False, "string")
+            
+            .Save
+        End With
+    End If
+End Sub
+
+
+Class IrcMessage
+    Public Prefix
+    Public Command
+    Public Parameters()
+    Public HasTrailingParameter
+    
+    Sub Class_Initialize()
+        Prefix = vbNullString
+        Command = vbNullString
+        ReDim Parameters(0)
+        HasTrailingParameter = False
+    End Sub
+    
+    Public Sub Create(cmd, params)
+        Command = cmd
+        Parameters = params
+    End Sub
+    
+    Public Function Parse(msg)
+        parts = Split(msg)
+        index = 0
+        If Left(parts(index), 1) = ":" Then
+            Prefix = Mid(parts(index), 2)
+            index = index + 1
+        End If
+        
+        If UBound(parts) < index Then
+            ' invalid message
+            Parse = False
+            Exit Function
+        End If
+        
+        Command = parts(index)
+        index = index + 1
+        
+        paramIndex = 0
+        HasTrailingParameter = False
+        Do While (index <= UBound(parts))
+            If HasTrailingParameter Then
+                Parameters(paramIndex) = Parameters(paramIndex) & Space(1) & parts(index)
+            Else
+                ReDim Preserve Parameters(paramIndex)
+                
+                If Left(parts(index), 1) = ":" Then
+                    HasTrailingParameter = True
+                    Parameters(paramIndex) = Mid(parts(index), 2)
+                Else
+                    Parameters(paramIndex) = parts(index)
+                    paramIndex = paramIndex + 1
+                End If
+            End If
+            
+            index = index + 1
+        Loop
+    End Function
+End Class
+
+Class IrcSettings
+    Public AutoConnect
+    Public Server
+    Public Port
+    Public Nickname
+    Public Username
+    Public RealName
+    Public Password
+    Public AutoJoinChannels
+    Public AutoSetFocus
+    Public DebugMode
+    
+    Sub Class_Initialize()
+        AutoConnect = False
+        Server = vbNullString
+        Port = 6667
+        Nickname = vbNullString
+        Username = vbNullString
+        RealName = vbNullString
+        Password = vbNullString
+        AutoJoinChannels = vbNullString
+        AutoSetFocus = True
+        DebugMode = 0
+    End Sub
+    
+    Public Sub Read()
+        AutoConnect = CBool((GetSettingsEntry("AutoConnect") = "True") Or (GetSettingsEntry("AutoConnect") = "1"))
+        Server = GetSettingsEntry("Server")
+        Port = Int(GetSettingsEntry("Port"))
+        Nickname = GetSettingsEntry("Nickname")
+        Username = GetSettingsEntry("Username")
+        RealName = GetSettingsEntry("RealName")
+        Password = GetSettingsEntry("Password")
+        AutoJoinChannels = GetSettingsEntry("AutoJoinChannels")
+        AutoSetFocus = CBool((GetSettingsEntry("AutoSetFocus") = "True") Or (GetSettingsEntry("AutoSetFocus") = "1"))
+        DebugMode = Int(GetSettingsEntry("DebugMode"))
+    End Sub
+    
+    Public Sub Write()
+        WriteSettingsEntry "AutoConnect", AutoConnect
+        WriteSettingsEntry "Server", Server
+        WriteSettingsEntry "Port", Port
+        WriteSettingsEntry "Nickname", Nickname
+        WriteSettingsEntry "Username", Username
+        WriteSettingsEntry "RealName", RealName
+        WriteSettingsEntry "Password", Password
+        WriteSettingsEntry "AutoJoinChannels", AutoJoinChannels
+        WriteSettingsEntry "AutoSetFocus", AutoSetFocus
+        WriteSettingsEntry "DebugMode", DebugMode
+    End Sub
+    
+    Public Function CanConnect()
+        CanConnect = _
+            (Len(Trim(Server)) > 0) And _
+            (Port > 0) And _
+            (Len(Trim(Nickname)) > 0) And _
+            (Len(Trim(Username)) > 0) And _
+            (Len(Trim(RealName)) > 0)
+    End Function
+    
+End Class
