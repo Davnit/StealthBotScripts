@@ -1,6 +1,8 @@
 #include "\sim\events.txt"
 #include "\sim\flags.txt"
 
+Option Explicit
+
 Script("Name") = "Simulate"
 Script("Author") = "Pyro"
 Script("Major") = 0
@@ -278,7 +280,7 @@ Function BuildFlagDictionary()
         .Add "guest", FLAG_GUEST
         .Add "reserved", FLAG_RESERVED
         .Add "beep", FLAG_BEEP
-        .Add "pglplay", FLAG_PGLPALYER
+        .Add "pglplay", FLAG_PGLPLAYER
         .Add "pgloff", FLAG_PGLOFFICIAL
         .Add "kbkplay", FLAG_KBKPLAYER
         .Add "wcgoff", FLAG_WCGOFFICIAL
