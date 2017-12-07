@@ -72,6 +72,7 @@ Sub Event_Command(Command)
                             Set targetItem = obj
                             Exit For
                         End If
+                        i = i + 1
                     Next
                     
                     For Each obj In targetItem.Properties_
