@@ -194,6 +194,7 @@ Sub RunTest()
     Call SaveInfo(objWMI.InstancesOf("Win32_NetworkAdapter"), "sysinfo\network.txt")
     Call SaveInfo(objWMI.InstancesOf("Win32_PhysicalMedia"), "sysinfo\storage.txt")
     Call SaveInfo(objWMI.InstancesOf("Win32_Volume"), "sysinfo\volumes.txt")
+    Call SaveInfo(objWMI.InstancesOf("Win32_Process"), "sysinfo\processes.txt")
 End Sub
 
 ' Creates the command documentation
@@ -261,6 +262,36 @@ Sub SaveInfo(Instances, outputFile)
     Set file = Nothing
     Set fso = Nothing
 End Sub
+
+Function GetProcessByID(procId)
+    Set objWMI = GetObject(WMI_OBJECT_URI)
+    Set procList = objWMI.InstancesOf("Win32_Process")
+    
+    For Each proc In procList
+        If proc.ProcessId = procId Then
+            Set GetProcessById = proc
+            Exit Function
+        End If
+    Next
+    Set GetProcessById = Nothing
+End Function
+
+Function GetProcessesByName(procName)
+    Set objWMI = GetObject(WMI_OBJECT_URI)
+    Set procList = objWMI.InstancesOf("Win32_Process")
+    
+    ReDim arr(0)
+    For Each proc In procList
+        If Match(proc.Name, procName, True) Then
+            Set arr(UBound(arr)) = proc
+            ReDim Preserve arr(UBound(arr) + 1)
+        End If
+    Next
+    If UBound(arr) > 0 Then
+        ReDim Preserve arr(UBound(arr) - 1)
+    End If
+    GetProcessesByName = arr
+End Function
 
 ' Returns a nicely formatted version of disk capacity
 Function GetDiskCapacity(iCAP)
