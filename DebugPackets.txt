@@ -47,25 +47,13 @@ Public Sub ShowPacket(Direction, Protocol, ID, ByVal Data)
     If ID >= 0 Then
         pid = "0x" & ToHex(ID)
     
-        summary = StringFormat("[{4}] {0} {1} PACKET {2} ({3} bytes)", Protocol, Direction, pid, Len(Data), Now())
+        summary = StringFormat("{0} {1} PACKET {2} ({3} bytes)", Protocol, Direction, pid, Len(Data))
     Else
-        summary = StringFormat("[{4}] {0} {1} RAW {2} bytes", Protocol, Direction, Len(Data), Now())
+        summary = StringFormat("{0} {1} RAW {2} bytes", Protocol, Direction, Len(Data))
     End If
     
-    With PacketLogForm.GetObjByName("rtbPackets")
-        .SelStart = Len(.Text)
-        .SelLength = 0
-        .SelColor = TEXT_COLOR
-        .SelText = vbCrLf & summary & vbCrLf & FormatPacket(Data)
-        
-        .SelStart = Len(.Text)
-        
-        If Len(.Text) > Config.MaxBacklogSize Then
-            .Text = Right(.Text, Config.MaxBacklogSize)
-            .Text = Mid(.Text, InStr(1, .Text, vbCrLf) + 2)
-            .SelStart = Len(.Text)
-        End If
-    End With
+    PacketLogForm.AddChat "rtbPackets", TEXT_COLOR, summary & vbCrLf & FormatPacket(Data)
+
 End Sub
 
 Function CheckFilter(ID)
