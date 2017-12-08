@@ -1,7 +1,7 @@
 Script("Name") = "Member Info"
 Script("Author") = "PyroManiac"
 Script("Major") = 1
-Script("Minor") = 0
+Script("Minor") = 1
     
 'Requests information on a member of a clan.
 'This script uses Battle.net packets instead of the website, so it's better. ;p
@@ -10,102 +10,61 @@ Script("Minor") = 0
 
 'Example: .mi Pyro[BoT]
 
-Public reqDic
-Public lastRequest
-Public lastRequestObj
+Const MI_COMMAND = "mi"
+Const MI_USER = "username"
+
+Public RequestDelay
+
+Private reqDic
+Private lastRequest
+Private lastRequestObj
 
 Sub Event_Load()
 	Set reqDic = CreateObject("Scripting.Dictionary")
+    
+    Call InitCommands()
+    
+    s = GetSettingsEntry("RequestDelay")
+    RequestDelay = Int(IIf(Len(s) = 0, "10", s))
 End Sub
 
-Sub Event_UserTalk(Username, Flags, Message, Ping)
-	If (Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger) And (Len(Message) > Len(BotVars.Trigger)) Then
-		ProcessCommand Username, Mid(Message, Len(BotVars.Trigger) + 1), 1
-	End If
+
+Sub Event_Command(Command)
+    If Command.Name <> MI_COMMAND Then Exit Sub
+    
+    If DateDiff("s", lastRequest, Now) < RequestDelay Then
+        Command.Respond "You must wait " & RequestDelay & " seconds before requesting another profile."
+        Exit Sub
+    End If
+    
+    If Not RequestUserInfo(Command.Argument(MI_USER), Command) Then
+        Command.Respond "A request for that user is already queued. Please wait."
+    End If
 End Sub
 
-Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
-	If (Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger) And (Len(Message) > Len(BotVars.Trigger)) Then
-		ProcessCommand Username, Mid(Message, Len(BotVars.Trigger) + 1), 3
-	End If
-End Sub
-
-Sub ProcessCommand(Username, Message, Source)
-	s = Split(Message, " ")
-	If LCase(s(0)) = "mi" And UBound(s) > 0 Then
-		Set db = GetDBEntry(Username)
-		If db.Rank > 100 Then
-			RequestUserInfo s(1), Username, Source
-		End If
-	End If
-End Sub
-
-Sub RequestUserInfo(user, Requestee, Source)
-	If DateDiff("s", lastRequest, Now) < 30 Then
-		Dsp Source, MIPrefix(Source = 4) & "You must wait 30 seconds before issuing another profile request.", Requestee, vbRed
-		Exit Sub
-	End If
-	
+Function RequestUserInfo(TargetUser, Command)
 	e = False
-	For Each r In reqDic
-		If Match(user, r.Name, True) Then
-			e = True
-			Exit For
+	For Each r In reqDic.Items()
+		If Match(TargetUser, r.Name, True) Then
+			RequestUserInfo = False
+			Exit Function
 		End If
 	Next
 	
-	If Not e Then
-		Set req = New ProfileRequest
-		req.Name = user
-		req.Cookie = GetNextRequestCookie()
-		req.Requestee = Requestee
-		req.RequestSource = Source
-		
-		req.Status = 1
-		
-		reqDic.Add req.Cookie, req
-		
-		RequestClanTag req.Name, req.Cookie
-		lastRequest = Now
-	Else
-		Dsp Source, MIPrefix(Source = 4) & "There is already an outstanding request for that user.", Requestee, vbRed
-	End If
-End Sub
-
-Sub GetUserInfo(name)
-	If DateDiff("s", lastRequest, Now) < 30 Then
-		AddChat vbRed, "[MI] You must wait 30 seconds before issuing another profile request."
-		Exit Sub
-	End If
+    Set req = New ProfileRequest
+	req.Name = TargetUser
+	req.Cookie = GetNextRequestCookie()
+	Set req.Command = Command
 	
-	exists = False
-	For Each r In reqDic
-		If Match(r.Name, name, True) Then
-			exists = True
-			Exit For
-		End If
-	Next
+	req.Status = 1
 	
-	If Not exists Then
-		Set req = New ProfileRequest
-		req.Name = name
-		req.Cookie = GetNextRequestCookie()
-		
-		req.Requestee = "[console]"
-		req.RequestSource = 4
-		
-		req.Status = 1
-		
-		reqDic.Add req.Cookie, req
-		
-		RequestClanTag req.Name, req.Cookie
-		lastRequest = Now
-		
-		AddChat vbYellow, "[MI] Requesting clan information on " & req.Name & " ..."
-	Else
-		AddChat vbRed, "[MI] There is already an outstanding request for that user."
-	End If
-End Sub
+	reqDic.Add req.Cookie, req
+	
+	RequestClanTag req.Name, req.Cookie
+	lastRequest = Now
+    
+    RequestUserInfo = True
+End Function
 
 Function GetNextRequestCookie()
 	x = 0
@@ -116,10 +75,6 @@ Function GetNextRequestCookie()
 		End If
 		x = x + 1
 	Loop			
-End Function
-
-Function MIPrefix(c)
-	If c Then MIPrefix = "[MI] " Else MIPrefix = vbNullString
 End Function
 
 Sub RequestClanTag(name, cookie)
@@ -142,14 +97,12 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
 			pak.Data = Data
 			pak.Position = 4
 			
-			Set req = Nothing
-			
 			cookie = pak.GetDWORD
 			status = pak.GetByte
 			
-			If reqDic.Exists(cookie) Then
-				Set req = reqDic(cookie)
-			End If
+			If Not reqDic.Exists(cookie) Then Exit Sub
+            
+            Set req = reqDic(cookie)
 			
 			If status = &H0 Then
 				pDes = pak.GetString
@@ -158,7 +111,8 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
 				
 				If dTag = &H0 Then 
 					req.Status = 7
-					Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & req.Name & " is not in a clan.", req.Requestee, vbRed
+					req.Command.Respond req.Name & " is not in a clan."
+                    req.Command.SendResponse
 					reqDic.Remove req.Cookie
 					Exit Sub
 				End If
@@ -172,32 +126,26 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
 					End If
 				Next
 				
-				If Not req Is Nothing Then
-					req.ClanTag = sTag
-					req.Status = 2
-					RequestClanMemberInfo req.Name, dTag, req.Cookie
-				End If
+                req.ClanTag = sTag
+				req.Status = 2
+				RequestClanMemberInfo req.Name, dTag, req.Cookie
 			Else
 				req.Status = 8
-				Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & "A profile could not be retreived for " & req.Name & ".", req.Requestee, vbRed
+				req.Command.Respond "A profile could not be retreived for " & req.Name & "."
+                req.Command.SendResponse
 				reqDic.Remove req.Cookie
-				Exit Sub
 			End If
-		End If
-		
-		If ID = &H82 Then
+		ElseIf ID = &H82 Then
 			Set pak = DataBufferEx()
 			pak.Data = Data
 			pak.Position = 4
-
-			Set req = Nothing
 			
 			cookie = pak.GetDWORD
 			status = pak.GetByte
 			
-			If reqDic.Exists(cookie) Then
-				Set req = reqDic(cookie)
-			End If
+			If Not reqDic.Exists(cookie) Then Exit Sub
+				
+            Set req = reqDic(cookie)
 			
 			If status = &H0 Then
 				req.ClanName = pak.GetString
@@ -208,23 +156,36 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
 				
 				req.ClanJoinDate = FileTimeToDate(CStr(joinedB) & Space(1) & CStr(joinedA))
 				
-				If Not req Is Nothing Then
-					req.Status = 3
-					dt = Split(req.ClanJoinDate, " ")
-					Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & req.Name & " is a " & req.ClanRank & _
-										   " in Clan " & req.ClanName & " [Tag: " & req.ClanTag & "]. He/she joined the clan on " & _
-										   dt(0) & " at " & dt(1) & Space(1) & dt(2) & ".", req.Requestee, vbGreen
-					reqDic.Remove req.Cookie
-				End If
+				req.Status = 3
+				dt = Split(req.ClanJoinDate, " ")
+				req.Command.Respond StringFormat("{0} is a {1} in Clan '{2}' ({3}). He/she joined on {4} at {5} {6}.", req.Name, req.ClanRank, req.ClanName, req.ClanTag, dt(0), dt(1), dt(2))
 			Else
 				req.Status = 6
-				Dsp req.RequestSource, MIPrefix(req.RequestSource = 4) & "No information is available on " & req.Name & ".", req.Requestee, vbRed
-				reqDic.Remove req.Cookie
+				req.Command.Respond "An error occurred. A clan tag was returned ( " & req.ClanTag & ") but the user was not found in that clan."
 			End If
-			
+            
+            reqDic.Remove req.Cookie
+            req.Command.SendResponse
 			Set lastRequestObj = req
 		End If
 	End If
+End Sub
+
+Sub InitCommands()
+    Set cmd = OpenCommand(MI_COMMAND)
+    If cmd Is Nothing Then
+        Set cmd = CreateCommand(MI_COMMAND)
+        With cmd
+            .RequiredRank = 20
+            .RequiredFlags = "G"
+            .Description = "Gets the WarCraft 3 clan information for a user."
+            
+            .Parameters.Add .NewParameter(MI_USER, False, "word")
+            
+            .Save
+        End With
+        Set cmd = Nothing
+    End If
 End Sub
 
 Class ProfileRequest
@@ -238,8 +199,7 @@ Class ProfileRequest
 	Public Cookie
 	
 	Public Status
-	Public Requestee
-	Public RequestSource
+	Public Command
 	
 	Public ClanTag
 	Public ClanName
