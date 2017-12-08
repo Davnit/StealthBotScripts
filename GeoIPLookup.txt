@@ -39,7 +39,7 @@ Sub InitCommands()
         With cmd
             .RequiredRank = 10
             .RequiredFlags = "G"
-            .Description = "Performs a DNS lookup on a host."
+            .Description = "Looks up the IP and geographic location of a host."
             
             Set param = .NewParameter(LOOKUP_HOSTPARAM, False, "word")
             param.Description = "The hostname to lookup."
