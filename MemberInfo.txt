@@ -151,13 +151,11 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
 				req.ClanName = pak.GetString
 				req.ClanRankByte = pak.GetByte
 				
-				joinedA = pak.GetDWORD
-				joinedB = pak.GetDWORD
-				
-				req.ClanJoinDate = FileTimeToDate(CStr(joinedB) & Space(1) & CStr(joinedA))
-				
+				req.ClanJoinDate = FileTimeToDate(pak.GetDWORD, pak.GetDWORD)
+                
 				req.Status = 3
 				dt = Split(req.ClanJoinDate, " ")
+
 				req.Command.Respond StringFormat("{0} is a {1} in Clan '{2}' ({3}). They joined on {4} at {5} {6}.", req.Name, req.ClanRank, req.ClanName, req.ClanTag, dt(0), dt(1), dt(2))
 			Else
 				req.Status = 6
