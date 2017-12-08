@@ -1,7 +1,7 @@
 Script("Name") = "IRC"
 Script("Author") = "Pyro"
 Script("Major") = 0
-Script("Minor") = 1
+Script("Minor") = 2
 Script("Description") = "Allows StealthBot to connect to an IRC network."
 
 Const IRC_COMMAND = "irc"
@@ -25,8 +25,7 @@ Sub Event_Load()
     Call InitCommands()
     
     Call InitSettings()
-    Set ClientSettings = New IrcSettings
-    Call ClientSettings.Read()
+    Set ClientSettings = GetSettings()
     
     If ClientSettings.AutoConnect And ClientSettings.CanConnect Then
         Call Connect(ClientSettings.Server, ClientSettings.Port)
@@ -36,29 +35,83 @@ End Sub
 Sub Event_Command(Command)
     Select Case Command.Name
         Case IRC_COMMAND
+            hasArgs = Not CBool(Len(Trim(Command.Argument(IRC_CMD_ARGS))) = 0)
             args = Split(Command.Argument(IRC_CMD_ARGS))
             Select Case LCase(Command.Argument(IRC_CMD_SUB))
                 Case "connect"
-                    If UBound(args) = 0 Then args = Split(args(0), ":")
+                    If hasArgs Then
+                        remoteEP = IIf(UBound(args) = 0, Split(args(0), ":"), args)
+                    Else
+                        remoteEP = Array(ClientSettings.Server, ClientSettings.Port)
+                    End If
                     
-                    Call Connect(args(0), IIf(UBound(args) > 0, Int(args(1)), 6667))
+                    If IsConnected() Then
+                        Command.Respond "Invalid operation. Client is already connected."
+                    Else
+                        Call Connect(remoteEP(0), IIf(UBound(remoteEP) > 0, Int(remoteEP(1)), 6667))
+                    End If
                 Case "disconnect"
                     sckIRC.Close
                 Case "send"
-                    args = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
-                    If UBound(args) = 0 Then
-                        Command.Respond "You must specify a channel to send to."
+                    If Not hasArgs Then
+                        Command.Respond "You must specify a channel and message to send."
                     Else
-                        Send "PRIVMSG " & args(0) & " :" & args(1)
+                        msgArgs = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
+                        If UBound(msgArgs) = 0 Then
+                            Command.Respond "You must specify a channel to send to."
+                        Else
+                            Send "PRIVMSG " & msgArgs(0) & " :" & msgArgs(1)
+                        End If
                     End If
                 Case "join"
-                    Send "JOIN " & args(0)
+                    If Not hasArgs Then
+                        Command.Respond "You must specify a channel to join."
+                    Else
+                        Send "JOIN " & args(0)
+                    End If
                 Case "part"
-                    args = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
-                    Send "PART " & args(0) & IIf(UBound(args) > 0, " :" & args(1), vbNullString)
+                    If Not hasArgs Then
+                        Command.Respond "You must specify a channel to leave."
+                    Else
+                        partArgs = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
+                        Send "PART " & partArgs(0) & IIf(UBound(partArgs) > 0, " :" & partArgs(1), vbNullString)
+                    End If
                 Case "focus"
-                    FocusChannel = args(0)
-                    Command.Respond "Set IRC focus channel to: " & FocusChannel                        
+                    If hasArgs Then
+                        FocusChannel = args(0)
+                        Command.Respond "Set IRC focus channel to: " & FocusChannel
+                    Else
+                        Command.Respond "The IRC focus channel is set to: " & FocusChannel
+                    End If
+                Case "nick"
+                    If hasArgs Then
+                        Send "NICK " & args(0)
+                    Else
+                        Command.Respond "Current IRC nickname is: " & MyNickname
+                    End If
+                Case "raw"
+                    If Not hasArgs Then
+                        Command.Respond "You must specify text to send."
+                    Else
+                        Send Command.Argument(IRC_CMD_ARGS)
+                    End If
+                Case "get"
+                    If Not hasArgs Then
+                        Command.Respond "You must specify a setting to get."
+                    Else
+                        value = GetSettingsEntry(args(0))
+                        If value = vbNullString Then value = "[ not set ]"
+                        Command.Respond StringFormat("{0}: {1}", args(0), value)
+                    End If
+                Case "set"
+                    setArgs = Split(Command.Argument(IRC_CMD_ARGS), Space(1), 2)
+                    If UBound(setArgs) < 1 Then
+                        Command.Respond "You must specify a setting name and value."
+                    Else
+                        WriteSettingsEntry setArgs(0), setArgs(1)
+                        Command.Respond StringFormat("Set '{0}' to '{1}'", setArgs(0), setArgs(1))
+                        Set ClientSettings = GetSettings()
+                    End If
             End Select
         Case IRC_FOCUS_CMD
             If FocusChannel = vbNullString Then
@@ -74,11 +127,16 @@ Sub Event_Command(Command)
 End Sub
 
 Sub Connect(RemoteHost, RemotePort)
+    If IsConnected() Then
+        AddChat Color.Orange, "[IRC] ", Color.ErrorMessageText, "Invalid operation. Client already connected."
+        Exit Sub
+    End If
+    
     With sckIRC
         .RemoteHost = RemoteHost
         .RemotePort = RemotePort
         
-        AddChat Color.Orange, "[IRC] ", Color.Yellow, StringFormat("Connecting to {0} ...", RemoteHost)
+        AddChat Color.Orange, "[IRC] ", Color.InformationText, StringFormat("Connecting to {0} ...", RemoteHost)
         .Connect
     End With
 End Sub
@@ -100,7 +158,7 @@ End Sub
 Sub Send(Message)
     If IsConnected() Then
         If Len(Message) > 510 Then
-            AddChat Color.Orange, "[IRC] ", Color.Red, "Error: Max message length exceeded. Unable to send."
+            AddChat Color.Orange, "[IRC] ", Color.ErrorMessageText, "Error: Max message length exceeded. Unable to send."
             Exit Sub
         End If
         
@@ -147,7 +205,7 @@ Sub ProcessIrcMessage(MessageText)
         Case "NICK"
             If GetNick(objMsg.Prefix) = MyNickname Then
                 MyNickname = objMsg.Parameters(0)
-                AddChat Color.Orange, "[IRC] ", Color.Yellow, "You are now known as: " & MyNickname
+                AddChat Color.Orange, "[IRC] ", Color.InformationText, "You are now known as: ", Color.SuccessText, MyNickname
             End If
         Case "JOIN"
             If GetNick(objMsg.Prefix) = MyNickname Then
@@ -163,7 +221,7 @@ Sub ProcessIrcMessage(MessageText)
             Next
             
             If ClientSettings.DebugMode > 0 Then
-                AddChat Color.Orange, "[IRC] ", Color.Cyan, "MSG: ", Color.White, StringFormat("({0}): {1} => '{2}'", objMsg.Prefix, objMsg.Command, Join(objMsg.Parameters, "', '"))
+                AddChat Color.Orange, "[IRC] ", Color.ConsoleText, "MSG: " & StringFormat("({0}): {1} => '{2}'", objMsg.Prefix, objMsg.Command, Join(objMsg.Parameters, "', '"))
             End If
     End Select
 End Sub
@@ -173,7 +231,7 @@ Function GetNick(Prefix)
 End Function
 
 Sub sckIRC_Connect()
-    AddChat Color.Orange, "[IRC] ", Color.Green, "Connected!"
+    AddChat Color.Orange, "[IRC] ", Color.SuccessText, "Connected!"
     
     ReceivedWelcome = False
     MyNickname = vbNullString
@@ -182,7 +240,7 @@ Sub sckIRC_Connect()
 End Sub
 
 Sub sckIRC_Close()
-    AddChat Color.Orange, "[IRC] ", Color.Red, "Disconnected."
+    AddChat Color.Orange, "[IRC] ", Color.ErrorMessageText, "Disconnected."
 End Sub
 
 Sub sckIRC_DataArrival(TotalBytes)
@@ -225,6 +283,11 @@ Sub InitSettings()
     Next
 End Sub
 
+Function GetSettings()
+    Set GetSettings = New IrcSettings
+    Call GetSettings.Read()
+End Function
+
 Sub InitCommands()
     Set cmd = OpenCommand(IRC_COMMAND)
     If cmd Is Nothing Then
@@ -233,7 +296,16 @@ Sub InitCommands()
             cmd.RequiredRank = -1
             cmd.Description = "Controls the IRC client."
             
-            .Parameters.Add .NewParameter(IRC_CMD_SUB, False, "word")
+            Set param = .NewParameter(IRC_CMD_SUB, False, "word")
+            
+            Set restrict = .NewRestriction(IRC_CMD_SUB, -1)
+            restrict.MatchMessage = "[Gg][Ee][Tt]"
+            restrict.MatchCaseSensitive = False
+            restrict.MatchError = "That sub-command is not available."
+            param.Restrictions.Add restrict
+            
+            .Parameters.Add param
+            
             .Parameters.Add .NewParameter(IRC_CMD_ARGS, True, "string")
             
             .Save
