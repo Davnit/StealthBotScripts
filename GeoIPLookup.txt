@@ -28,8 +28,12 @@ Sub Event_Command(Command)
         geoData.Add Split(Split(lines(i), "<")(1), ">")(0), Split(Split(lines(i), ">")(1), "</")(0) 
     Next
 
-    Command.Respond StringFormat("{0} ({1}) is located in {2}, {3} ({4})", _
-        host, geoData("IP"), geoData("City"), geoData("RegionCode"), geoData("CountryName"))
+	If StrComp(host, geoData("IP"), vbTextCompare) <> 0 Then
+		host = host & " (" & geoData("IP") & ")"
+	End If
+	
+    Command.Respond StringFormat("{0} is located in {1}, {2} ({3})", _
+        host, geoData("City"), geoData("RegionCode"), geoData("CountryName"))
 End Sub
 
 Sub InitCommands()
