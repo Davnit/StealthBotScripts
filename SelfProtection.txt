@@ -5,22 +5,31 @@ Script("Author") = "PyroManiac"
 
 
 Sub Event_ServerInfo(Message)
-	Dim op, mem, rank, sham
+	Dim op, idx
+	op = vbNullString
 	
 	If Match(Message, Config.BotOwner & " was banned by *", True) Then
 		AddQ "/unban " & Config.BotOwner
 		op = Split(Message, " ")(4)
 	ElseIf Match(Message, Config.BotOwner & " was kicked out of the channel by *", True) Then
 		op = Split(Message, " ")(8)
+	Else
+		Exit Sub
 	End If
 
-	DoDemote Clan.GetMemberIndex(op)
+	idx = Clan.GetMemberIndex(op)
+	If idx <= 0 Then
+		op = Left(op, Len(op) - 1)
+		idx = Clan.GetMemberIndex(op)
+	End If
+	
+	If idx > 0 Then Call DoDemote(idx)
 End Sub
 
 Sub DoDemote(MemberIndex)
 	Dim mem
-    If MemberIndex > 0 Then
-		Set mem = Clan.GetMember(MemberIndex)
+	Set mem = Clan.GetMember(MemberIndex)
+	If Clan.Self.Rank > mem.Rank Then
 		Select Case mem.Rank
 			Case 3
 				mem.Demote 2
@@ -30,11 +39,16 @@ Sub DoDemote(MemberIndex)
 			Case 1
 				mem.Promote 2
 				mem.Demote 1
-			Case 0, 4
-				AddChat vbRed, "[SP] Member cannot be demoted. He/she is either an initiate or the chieftain. (" & mem.Name & ")"
+			Case 0
+				AddChat Color.ErrorMessageText, "[SP] Member '" & mem.Name & "' cannot be demoted because they are an initiate."
+			Case 4
+				AddChat Color.ErrorMessageText, "[SP] Somehow you are a higher rank than the chieftain who kicked you. GG."
 			Case Else
-				AddChat vbRed, "[SP] Invalid member rank: " & mem.Rank & " (" & mem.Name & ")"
+				AddChat Color.ErrorMessageText, "[SP] Invalid member rank: " & mem.Rank & " (" & mem.Name & ")"
 		End Select
-		Set mem = Nothing
-	End If			
+	Else
+		AddChat Color.ErrorMessageText, "[SP] Member '" & mem.Name & "' cannot be demoted because they are an equal or higher rank."
+	End If
+	
+	Set mem = Nothing		
 End Sub
