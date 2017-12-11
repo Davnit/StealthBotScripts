@@ -1,0 +1,161 @@
+Script("Name") = "Random Phrase Kicker"
+Script("Author") = "Pyro"
+Script("Major") = 2
+Script("Minor") = 0
+
+Public victims
+
+Sub Event_Load()
+	Dim arrVics, i, curVic
+	
+	Set victims = CreateObject("Scripting.Dictionary")
+	
+	arrVics = Split(GetSettingsEntry("victims"), "|")
+	For i = LBound(arrVics) To UBound(arrVics)
+		Set curVic = New RPKVictim
+		curVic.Name = Split(arrVics(i), ":")(0)
+		If InStr(arrVics(i), ":") > 0 Then
+			curVic.BanCount = Int(Split(arrVics(i), ":")(1))
+		Else
+			curVic.BanCount = 0
+		End If
+		
+		victims.Add curVic.Name, curVic
+	Next
+	
+	Dim cmd, param
+	Set cmd = OpenCommand("rpk")
+	If cmd Is Nothing Then
+		Set cmd = CreateCommand("rpk")
+		With cmd
+			Set param = .NewParameter("option", False, "word")
+			With param
+				.Description = "The action you would like to execute."
+			End With
+			.Parameters.Add param
+			
+			Set param = .NewParameter("user", True, "word")
+			With param
+				.Description = "The user you would like to add or remove from the victims list."
+			End With
+			.Parameters.Add param
+			
+			.RequiredRank = 70
+			.RequiredFlags = "O"
+			
+			.Description = "Manages the RPK victims list."
+			
+			.Save
+		End With
+	End If
+End Sub
+
+Sub Event_Close()
+	Dim i, strVics
+	strVics = vbNullString
+	For i = 0 To (victims.Count - 1)
+		strVics = strVics & victims.Items(i).Name & ":" & victims.Items(i).BanCount & "|"
+	Next
+	WriteSettingsEntry "victims", strVics
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	Call processChat(Username, Message)
+End Sub
+
+Sub Event_UserEmote(Username, Flags, Message)
+	Call processChat(Username, Message)
+End Sub
+
+Sub processChat(Username, Message)
+	Dim doBan, i
+	doBan = False
+	
+	If Len(Message) > 200 Then doBan = True
+	If doBan = False Then
+		For i = 0 To (victims.Count - 1)
+			If Match(Username, victims.Items(i).Name, True) Then
+				doBan = True
+				Exit For
+			End If
+		Next
+	End If
+	
+	If doBan Then
+		AddChat vbGreen, StringFormat("Found RPK match: {0}", vic.Name)
+		mSplit = Split(Message, " ")
+		nRand = Int(Rnd * UBound(mSplit))
+		BanKickUnban StringFormat("{0} Phrasekick: {1}) ({2}", Username, mSplit(nRand), vic.BanCount), 100, 1
+		vic.BanCount = vic.BanCount + 1
+	End If
+End Sub
+
+Sub Event_Command(cmd)
+	If cmd.Docs.Owner = Script("Name") Then
+		Select Case LCase(cmd.Name)
+			Case "rpk":
+				If cmd.IsValid Then
+					Select Case LCase(cmd.Argument("option"))
+						Case "a", "add":
+							If cmd.Argument("user") <> vbNullString Then
+								victims.Add cmd.Argument("user"), 0
+								cmd.Respond StringFormat("Added ""{0}"" to the RPK victims list.", cmd.Argument("user"))
+							Else
+								cmd.Respond "Please specify a user or tag to add to the RPK victims list."
+							End If
+						Case "r", "rem", "d", "del":
+							If cmd.Argument("user") <> vbNullString Then
+								If victims.Exists(cmd.Argument("user")) Then
+									cmd.Respond "User/tag is already a victim."
+								Else
+									victims.Remove cmd.Argument("user")
+									cmd.Respond StringFormat("Removed ""{0}"" from the RPK victims list.", cmd.Argument("user"))
+								End If
+							Else
+								cmd.Respond "Please specify a user or tag to remove from the RPK victims list."
+							End If
+						Case "l", "list":
+							Dim i, v
+							If cmd.Argument("user") <> vbNullString Then
+								Dim eList
+								v = victims.Items
+								For i = 0 To (victims.Count - 1)
+									If Match(cmd.Argument("user"), v(i).Name, True) Then
+										eList = eList & v(i).Name & ", "
+									End If
+								Next
+								If Len(eList) > 2 Then
+									eList = Left(eList, Len(eList) - 2)
+									cmd.Respond StringFormat("{0} is marked under the following RPK entries: {1}", cmd.Argument("user"), eList)
+								Else
+									cmd.Respond StringFormat("{0} is not marked under any RPK entries.")
+								End If
+							Else
+								If victims.Count > 0 Then
+									Dim strVictims
+									strVictims = ""
+									v = victims.Items
+									For i = 0 To (victims.Count - 1)
+										strVictims = strVictims & v(i).Name & ", "
+									Next
+									strVictims = Left(strVictims, Len(strVictims) - 2)
+									cmd.Respond StringFormat("RPK victims: {0}", strVictims)
+								Else
+									cmd.Respond "There are no users or victims on the RPK victims list."
+								End If
+							End If
+						Case Else
+							cmd.Respond "Unknwon RPK option. Valid options are: add, rem, and list"
+					End Select
+				Else
+					cmd.Respond StringFormat("Proper syntax for this command is: {0}rpk <option> [user]", BotVars.Trigger)
+				End If
+		End Select
+	End If
+End Sub
+
+Class RPKVictim
+	Public Name
+	Public BanCount
+End Class
+								
