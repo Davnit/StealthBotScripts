@@ -30,6 +30,7 @@ Private HasProcessor
 
 Sub Event_Load()
     HasProcessor = Not (GetScriptByName(EVENT_PROCESSOR_SCRIPT) Is Nothing)
+
     If HasProcessor Then
         Call ObserveScript(EVENT_PROCESSOR_SCRIPT)
     End If
@@ -65,6 +66,7 @@ End Sub
 ' This method is skipped if the event processor is installed and enabled.
 Private Sub Recv_SID_CHATEVENT(Buffer)
     If (SwapPacket = False) Then Exit Sub
+    
     Dim EventID:  EventID  = Buffer.GetDWORD()
     Dim Flags:    Flags    = Buffer.GetDWORD()
     Dim Ping:     Ping     = Buffer.GetDWORD()
@@ -80,19 +82,22 @@ End Sub
 
 Public Sub Event_ChatEventReceived(EventID, Flags, Ping, IP, Account, RegAuth, Username, Message)
     Dim NewText
-    
+
     If (SwapPacket = False) Then Exit Sub
     
     ' Is this a user-generated event?
     Select Case EventID
         Case EID_WHISPER, EID_TALK, EID_BROADCAST, EID_WHISPERSENT, EID_INFO, EID_ERROR, EID_EMOTE:
-            NewText = UnfilterProfanity(Message)
+            NewText = Message
+            NewText = UnfilterProfanity(NewText)
 
             ' Was any profanity found?
             If StrComp(Message, NewText, vbBinaryCompare) = 0 Then
                 Exit Sub
             End If
             Message = NewText
+        Case Else
+            Exit Sub
     End Select
 
     ' Build the replacement packet
