@@ -37,6 +37,9 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
     ' We are only interested in BNCS packet 0x0F (SID_CHATEVENT)
     If Protocol <> "BNCS" Or ID <> &HF Then Exit Sub
     
+    ' No need to dissect this if nobody is watching
+    If GetObservers().Count = 0 Then Exit Sub
+    
     Dim Buffer, EventID, Flags, Ping, IP, Account, RegAuth, Username, Message
     Set Buffer = DataBufferEx()
     Buffer.Data = Data
