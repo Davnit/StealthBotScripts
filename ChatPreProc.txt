@@ -3,7 +3,7 @@ Option Explicit
 Script("Name") = "Chat Event Pre-Processor"
 Script("Author") = "Pyro"
 Script("Major") = 0
-Script("Minor") = 3
+Script("Minor") = 4
 Script("Description") = "Provides a mechanism for chat events to be dispatched to scripts prior to internal processing."
 
 ' This script allows other scripts to get advanced notice of chat events and VETO them if needed,
@@ -12,6 +12,26 @@ Script("Description") = "Provides a mechanism for chat events to be dispatched t
 ' Scripts wanting to use this script only need to observe it and then implement a method "Event_ChatEventReceived" with
 '   the following args: EventID, Flags, Ping, IP, Account, RegAuth, Username, Message
 
+Public DebugMode            ' int: 0 = off, 1 = active fields (username, flags, message, ping), 2 = all fields
+
+Private EventDictionary     ' maps event IDs to names
+
+Sub Event_Load()
+    Dim val
+    
+    Call BuildEventDictionary
+    
+    val = GetSettingsEntry("DebugMode")
+    If val = vbNullString Then
+        DebugMode = 0
+    Else
+        DebugMode = CInt(val)
+    End If
+End Sub
+
+Sub Event_Close()
+    Set EventDictionary = Nothing
+End Sub
 
 Sub Event_PacketReceived(Protocol, ID, Length, Data)    
     ' We are only interested in BNCS packet 0x0F (SID_CHATEVENT)
@@ -31,9 +51,49 @@ Sub Event_PacketReceived(Protocol, ID, Length, Data)
     Username = Buffer.GetString()
     Message = Buffer.GetString()
     
+    If DebugMode > 0 Then
+        Dim EventName
+        EventName = IIf(EventDictionary.Exists(EventID), EventDictionary(EventID), "UNKNOWN")
+        
+        AddChat Color.InformationText, "[DEBUG] Received chat event: 0x" & Hex(EventID) & " (" & EventName & ")"
+        AddChat Color.InformationText, "[DEBUG]    Username: " & Username & " (flags: 0x" & Hex(Flags) & ", ping: " & Ping & ")"
+        AddChat Color.InformationText, "[DEBUG]    Message: " & Message & " (length: " & Len(Message) & ")"
+        
+        If DebugMode > 1 Then
+            AddChat Color.InformationText, "[DEBUG]    IP: " & IP & " (0x" & Hex(IP) & ")"
+            AddChat Color.InformationText, "[DEBUG]    Account number: " & Account & " (0x" & Hex(Account) & ")"
+            AddChat Color.InformationText, "[DEBUG]    Registration authority: " & RegAuth & " (0x" & Hex(RegAuth) & ")"
+        End If            
+    End If
+    
+    On Error Resume Next
     Dim Observer
     For Each Observer In GetObservers()
         Call Scripts(Observer).Event_ChatEventReceived(EventID, Flags, Ping, IP, Account, RegAuth, Username, Message)
     Next
+    On Error GoTo 0
 End Sub
 
+
+Sub BuildEventDictionary()
+    Set EventDictionary = CreateObject("Scripting.Dictionary")
+    With EventDictionary
+        .Add &H1, "EID_SHOWUSER"
+        .Add &H2, "EID_JOIN"
+        .Add &H3, "EID_LEAVE"
+        .Add &H4, "EID_WHISPER"
+        .Add &H5, "EID_TALK"
+        .Add &H6, "EID_BROADCAST"
+        .Add &H7, "EID_CHANNEL"
+        .Add &H9, "EID_USERFLAGS"
+        .Add &HA, "EID_WHISPERSENT"
+        .Add &HD, "EID_CHANNELFULL"
+        .Add &HE, "EID_CHANNELDOESNOTEXIST"
+        .Add &HF, "EID_CHANNELRESTRICTED"
+        .Add &H12, "EID_INFO"
+        .Add &H13, "EID_ERROR"
+        .Add &H15, "EID_IGNORE"
+        .Add &H16, "EID_ACCEPT"
+        .Add &H17, "EID_EMOTE"
+    End With
+End Sub
