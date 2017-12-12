@@ -1,0 +1,85 @@
+Script("Name") = "WolframAlpha"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 1
+Script("Description") = "Answers queries from the Wolfram|Alpha API."
+
+' To use this script, you MUST get an API key from developer.wolframalpha.com
+
+Const WA_COMMAND = "wa"
+Const WA_QUERY = "query"
+
+Private APIKey
+
+Sub Event_Load()
+    APIKey = GetSettingsEntry("APIKey")
+    
+    Call InitCommands()
+End Sub
+
+Sub Event_Command(Command)
+    If Command.Name <> WA_COMMAND Then Exit Sub
+    
+    If APIKey = vbNullString Then
+        Command.Respond "That command is unavailable."
+        Exit Sub
+    End If
+    
+    If Not Command.IsValid Then
+        Command.Respond "You must specify a query."
+        Exit Sub
+    End If
+    
+    query = Command.Argument(WA_QUERY)
+    endpoint = StringFormat("https://api.wolframalpha.com/v1/result?i={0}&appid={1}", PrepareUrl(Command.Argument(WA_QUERY)), APIKey)
+    
+    response = scInet.OpenURL(CStr(endpoint), 0)
+    
+    If Len(response) > 0 Then
+        If Left(response, 1) = "/" Then response = Space(1) & response
+        Command.Respond response
+    Else
+        Command.Respond "No results found."
+    End If
+End Sub
+
+Function PrepareUrl(url)
+    length = Len(url)
+    ReDim result(length)
+    
+    For i = 1 To length
+        c = Mid(url, i, 1)
+        v = AscW(c)
+        Select Case True
+            Case InRange(v, 97, 122) Or InRange(v, 65, 90) Or InRange(v, 48, 57) Or v = 45 Or v = 46 Or v = 95 Or v = 126
+                result(i) = c
+            Case v = 32
+                result(i) = "+"
+            Case Else
+                result(i) = "%" & Right("00" & Hex(v), 2)
+        End Select
+    Next
+    
+    PrepareUrl = Join(result, vbNullString)
+End Function
+
+Function InRange(n, min, max)
+    InRange = (n >= min And n <= max)
+End Function
+
+Sub InitCommands()
+    Set cmd = OpenCommand(WA_COMMAND)
+    If cmd Is Nothing Then
+        Set cmd = CreateCommand(WA_COMMAND)
+        With cmd
+            .RequiredRank = 10
+            .RequiredFlags = "G"
+            .Description = "Answers queries from the Wolfram|Alpha API."
+            
+            .Parameters.Add .NewParameter(WA_QUERY, False, "string")
+            
+            .Save
+        End With
+    End If
+End Sub
+
