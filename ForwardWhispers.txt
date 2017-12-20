@@ -7,7 +7,7 @@ Script("Name") = "ForwardWhispers"
 Script("Author") = "Ribose"
 Script("Major") = 1
 Script("Minor") = 3
-Script("Revision") = 20090427
+Script("Revision") = 20171220
 
 Const FWD_OWNER = "%o"
 Const FWD_FRIEND = "%f"
@@ -48,7 +48,7 @@ Sub ReceivedWhisper(Username, Message)
     If fwduser = FWD_FRIEND Then
         AddQ "/f m " & fwdmsg
     Else
-        If fwduser <> LCase(Username) Then
+        If StrComp(fwduser, Username, vbTextCompare) <> 0 Then
             If BotVars.Product = "VD2D" Or BotVars.Product = "PX2D" Then
                 AddQ "/w *" & fwduser & " " & fwdmsg
             Else
