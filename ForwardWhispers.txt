@@ -40,6 +40,9 @@ Sub ReceivedWhisper(Username, Message)
 	
 	' Don't forward friend logon/logoff messages.
 	If Match(Message, "Your friend * has e*ed Battle.net.", True) Then Exit Sub
+    
+    ' Don't forward messages from the email service.
+    If Username = "# Email Service #" Then Exit Sub
 	
     fwduser = LCase(Trim(GetSettingsEntry("ForwardTo")))
     fwdmsg = "Whisper from " & Username & ": " & Message
