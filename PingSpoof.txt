@@ -1,0 +1,120 @@
+'Ping Spoofer
+'Author: Pyro
+
+Script("Name") = "Ping Spoofer"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 0
+
+Dim Spoofing	'BOOL: Are we delaying?
+Dim Target		'The target ping value.
+Dim Start		'The tick count at the start of the spoof.
+Dim p0x25		'Data from 0x25
+Dim p0x51		'Data from 0x51
+
+Sub Event_Load()
+	'Get the data.
+	Target = GetSettingsEntry("pingTarget")
+	If (Not (IsNumeric(Target))) Then
+		Target = 0
+	Else
+		Target = Int(Target)
+	End If
+	
+	Spoofing = False
+	p0x25 = vbNullString
+	p0x51 = vbNullString
+	Start = 0
+	
+	'Setup the menu.
+	Call CreateObj("Menu", "mnuTime")
+	mnuTime.Caption = "Set Spoof Target"
+End Sub
+
+Sub Event_PacketSent(Protocol, ID, Length, Data)
+	'Are we in chat? (if we're not, we can just do everything normally.)
+	If (Channel.Name = vbNullString) Then
+		'Nope, we must do something!
+		
+		'Is this a BNCS packet?
+		If (Protocol = "BNCS") Then
+			'Are we delaying the packet?
+			If (Not Spoofing) Then
+				'No, so are we getting ping?
+				If ((ID = &H25) And (p0x25 = vbNullString)) Then
+					'SID_PING
+					p0x25 = Mid(Data, 5)
+					VetoThisMessage
+					
+					'Setup the timer.
+					Call CreateObj("Timer", "delayTime")
+					delayTime.Interval = 1
+					
+					'Start it.
+					delayTime.Enabled = True
+					Spoofing = True
+					Start = GetGTC()
+					AddChat vbYellow, "[BNET] Ping spoof started. Target is " & Target & "ms."
+				End If
+			Else
+				'Yea, so is this the auth check?
+				If ((ID = &H51) And (p0x51 = vbNullString)) Then
+					'SID_AUTH_CHECK
+					p0x51 = Mid(Data, 5)
+					VetoThisMessage
+				End If
+			End If
+		End If
+	Else
+		'Turn off the timer.
+		delayTime.Enabled = False
+	End If
+End Sub
+
+Sub delayTime_Timer()
+	'Are we spoofing?
+	If (Spoofing) Then		
+		'Are we done?
+		If ((GetGTC() - Start) >= Target) Then			
+			'We're done!
+			Spoofing = False
+			AddChat vbGreen, "[BNET] Ping spoof complete."
+			
+			'Make a buffer to hold our delayed packets.
+			Set buf = DataBufferEx()
+			
+			'Release 0x25!
+			If (p0x25 = vbNullString) Then
+				'Crap! Something went wrong. ABORT!!!
+				AddChat vbRed, "[BNET] Error: Something went wrong during the ping spoof process. Aborting connection..."
+				Call Disconnect
+				Exit Sub
+			Else
+				buf.Data = p0x25
+				buf.SendPacket &H25
+				p0x25 = vbNullString
+			End If
+			
+			'Release 0x51! (if we got it)
+			If (Not (p0x51 = vbNullString)) Then
+				buf.Data = p0x51
+				buf.SendPacket &H51
+				p0x51 = vbNullString
+			End If
+		End If
+	Else
+		'Why are we counting? Turn this thing off!
+		delayTime.Enabled = False
+	End If		
+End Sub
+
+Sub mnuTime_Click()
+	a = InputBox("Please enter the ping time, in milliseconds, that you would like to spoof. " & _
+				 "(Note that these spoofs are not 100% accurate.)", "Enter a Target Ping")
+	
+	If (Not (a = vbNullString)) Then
+		If (Not (IsNumeric(a))) Then Exit Sub
+		WriteSettingsEntry "pingTarget", a
+		Target = Int(a)
+	End If
+End Sub
