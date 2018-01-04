@@ -1,62 +1,99 @@
 Script("Name") = "Random Phrase Kicker"
 Script("Author") = "Pyro"
 Script("Major") = 2
-Script("Minor") = 0
+Script("Minor") = 1
 
-Public victims
+'// Changelog
+'//  v2.1
+'//     - Added a per-user kick limit. Users will be banned once they exceed this limit. Set to 0 to disable.
+'//     - Changed phrases to be lower cased in the ban message (to look more natural).
+'//     - Changed the SPEAKERACCESS parameter used in BanKickUnban() to be configurable. Default: 1
+'//     - Moved the display of kick count from the ban message to the console.
+'//     - Changed phrase processing to choose a small subset of the phrase if it's too long.
+'//     - Removed wildcard support for victims.
+
+
+Const MODE_BAN = 0
+Const MODE_KICK = 1
+
+Const BASE_COMMAND = "rpk"
+
+Public victims, kickLimit, useNaturalPhrases, speakerAccess
 
 Sub Event_Load()
 	Dim arrVics, i, curVic
 	
+    '// Loads the list of victims.
 	Set victims = CreateObject("Scripting.Dictionary")
-	
 	arrVics = Split(GetSettingsEntry("victims"), "|")
 	For i = LBound(arrVics) To UBound(arrVics)
 		Set curVic = New RPKVictim
 		curVic.Name = Split(arrVics(i), ":")(0)
 		If InStr(arrVics(i), ":") > 0 Then
-			curVic.BanCount = Int(Split(arrVics(i), ":")(1))
+			curVic.TotalKicks = Int(Split(arrVics(i), ":")(1))
 		Else
-			curVic.BanCount = 0
+			curVic.TotalKicks = 0
 		End If
+        curVic.KickCount = 0
 		
 		victims.Add curVic.Name, curVic
 	Next
+    
+    '// Loads various settings.
+    kickLimit = GetSettingsEntry("kickLimit")
+    If kickLimit = vbNullString Then kickLimit = 0 Else kickLimit = CInt(kickLimit) End If
+    speakerAccess = GetSettingsEntry("speakerAccess")
+    If speakerAccess = vbNullString Then speakerAccess = 1 Else speakerAccess = CInt(speakerAccess) End If
 	
-	Dim cmd, param
-	Set cmd = OpenCommand("rpk")
+    '// Check to see if the script's command has already been made.
+	Dim cmd, param, rank, flags
+	Set cmd = OpenCommand(BASE_COMMAND)
 	If cmd Is Nothing Then
-		Set cmd = CreateCommand("rpk")
-		With cmd
-			Set param = .NewParameter("option", False, "word")
-			With param
-				.Description = "The action you would like to execute."
-			End With
-			.Parameters.Add param
-			
-			Set param = .NewParameter("user", True, "word")
-			With param
-				.Description = "The user you would like to add or remove from the victims list."
-			End With
-			.Parameters.Add param
-			
-			.RequiredRank = 70
-			.RequiredFlags = "O"
-			
-			.Description = "Manages the RPK victims list."
-			
-			.Save
+        rank = 70
+        flags = "O"
+    Else
+        '// Preserve user defined rank and flags.
+        rank = cmd.RequiredRank
+        flags = cmd.RequiredFlags
+        
+        Set cmd = DeleteCommand(BASE_COMMAND)
+    End If
+    
+    '// Create the script's command.
+	Set cmd = CreateCommand(BASE_COMMAND)
+	With cmd
+		Set param = .NewParameter("option", False, "word")
+		With param
+			.Description = "The action to execute. add/remove/list"
 		End With
-	End If
+		.Parameters.Add param
+		
+		Set param = .NewParameter("value", True, "word")
+		With param
+			.Description = "The value to go with the action."
+		End With
+		.Parameters.Add param
+		
+		.RequiredRank = rank
+		.RequiredFlags = flags
+		
+		.Description = "Manages the RPK victims list and associated settings."
+		
+		.Save
+	End With
 End Sub
 
 Sub Event_Close()
+    '// Save victim list/kick counts and settings.
 	Dim i, strVics
 	strVics = vbNullString
 	For i = 0 To (victims.Count - 1)
-		strVics = strVics & victims.Items(i).Name & ":" & victims.Items(i).BanCount & "|"
+		strVics = strVics & victims.Items(i).Name & ":" & victims.Items(i).TotalKicks & "|"
 	Next
 	WriteSettingsEntry "victims", strVics
+    
+    WriteSettingsEntry "kickLimit", CStr(kickLimit)
+    WriteSettingsEntry "speakerAccess", CStr(speakerAccess)
 End Sub
 
 Sub Event_UserTalk(Username, Flags, Message, Ping)
@@ -68,25 +105,14 @@ Sub Event_UserEmote(Username, Flags, Message)
 End Sub
 
 Sub processChat(Username, Message)
-	Dim doBan, i
-	doBan = False
+    Dim i, mSplit, nRand
+
 	
-	If Len(Message) > 200 Then doBan = True
-	If doBan = False Then
-		For i = 0 To (victims.Count - 1)
-			If Match(Username, victims.Items(i).Name, True) Then
-				doBan = True
-				Exit For
-			End If
-		Next
-	End If
-	
-	If doBan Then
-		AddChat vbGreen, StringFormat("Found RPK match: {0}", vic.Name)
+	If GetVictim(Username) Then
+		AddChat vbGreen, StringFormat("Found RPK match: {0} - Kick Count: {1} - Total Kicks: {2}", vic.Name, vic.KickCount, vic.TotalKicks)
 		mSplit = Split(Message, " ")
 		nRand = Int(Rnd * UBound(mSplit))
-		BanKickUnban StringFormat("{0} Phrasekick: {1}) ({2}", Username, mSplit(nRand), vic.BanCount), 100, 1
-		vic.BanCount = vic.BanCount + 1
+        vic.Kick mSplit(nRand)
 	End If
 End Sub
 
@@ -95,67 +121,120 @@ Sub Event_Command(cmd)
 		Select Case LCase(cmd.Name)
 			Case "rpk":
 				If cmd.IsValid Then
-					Select Case LCase(cmd.Argument("option"))
+                    Dim opt, val
+                    opt = LCase(cmd.Argument("option"))
+                    val = cmd.Argument("value")
+					Select Case opt
 						Case "a", "add":
-							If cmd.Argument("user") <> vbNullString Then
-								victims.Add cmd.Argument("user"), 0
-								cmd.Respond StringFormat("Added ""{0}"" to the RPK victims list.", cmd.Argument("user"))
-							Else
-								cmd.Respond "Please specify a user or tag to add to the RPK victims list."
-							End If
-						Case "r", "rem", "d", "del":
-							If cmd.Argument("user") <> vbNullString Then
-								If victims.Exists(cmd.Argument("user")) Then
-									cmd.Respond "User/tag is already a victim."
+							Dim vic
+                            If GetVictim(val) Is Nothing Then
+                                If val <> vbNullString Then
+                                    Set vic = New RPKVictim
+                                    vic.Name = val
+                                    vic.KickCount = 0
+                                    vic.TotalKicks = 0
+                                    
+                                    victims.Add vic.Name, vic
+                                    cmd.Respond StringFormat("Added ""{0}"" to the RPK victims list.", vic.Name)
+                                Else
+                                    cmd.Respond "Please specify a user to add to the RPK victims list."
+                                End If
+                            Else
+                                cmd.Respond StringFormat("User ""{0}"" is already a victim.", val)
+                            End If
+						Case "r", "rem", "remove", "d", "del", "delete":
+							If val <> vbNullString Then
+								If GetVictim(val) Is Nothing Then
+									cmd.Respond StringFormat("User ""{0}"" is not a victim.", val)
 								Else
-									victims.Remove cmd.Argument("user")
-									cmd.Respond StringFormat("Removed ""{0}"" from the RPK victims list.", cmd.Argument("user"))
+									victims.Remove val
+									cmd.Respond StringFormat("Removed user ""{0}"" from the RPK victims list.", val)
 								End If
 							Else
-								cmd.Respond "Please specify a user or tag to remove from the RPK victims list."
+								cmd.Respond "Please specify a user to remove from the RPK victims list."
 							End If
 						Case "l", "list":
 							Dim i, v
-							If cmd.Argument("user") <> vbNullString Then
-								Dim eList
+							If victims.Count > 0 Then
+								Dim strVictims
+								strVictims = vbNullString
 								v = victims.Items
 								For i = 0 To (victims.Count - 1)
-									If Match(cmd.Argument("user"), v(i).Name, True) Then
-										eList = eList & v(i).Name & ", "
-									End If
+									strVictims = strVictims & StringFormat("{0} [{1}], ", v(i).Name, v(i).TotalKicks)
 								Next
-								If Len(eList) > 2 Then
-									eList = Left(eList, Len(eList) - 2)
-									cmd.Respond StringFormat("{0} is marked under the following RPK entries: {1}", cmd.Argument("user"), eList)
-								Else
-									cmd.Respond StringFormat("{0} is not marked under any RPK entries.")
-								End If
+								strVictims = Left(strVictims, Len(strVictims) - 2)
+								cmd.Respond StringFormat("RPK victims (total: {0}): {1}", victims.Count, strVictims)
 							Else
-								If victims.Count > 0 Then
-									Dim strVictims
-									strVictims = ""
-									v = victims.Items
-									For i = 0 To (victims.Count - 1)
-										strVictims = strVictims & v(i).Name & ", "
-									Next
-									strVictims = Left(strVictims, Len(strVictims) - 2)
-									cmd.Respond StringFormat("RPK victims: {0}", strVictims)
-								Else
-									cmd.Respond "There are no users or victims on the RPK victims list."
-								End If
+								cmd.Respond "There are no users on the RPK victims list."
 							End If
+                        Case "limit"
+                            If IsNumeric(val) Then
+                                val = CInt(val)
+                                If val < 0 Then
+                                    cmd.Respond "Invalid kick limit. Must be greater than or equal to 0."
+                                Else
+                                    kickLimit = val
+                                    cmd.Respond StringFormat("Kick limit set to {0}.", kickLimit)
+                                End If
+                            Else
+                                cmd.Respond "Invalid kick limit. Must be a number."
+                            End If    
+                        Case "strength"
+                            If IsNumeric(val) Then
+                                val = CInt(val)
+                                If val < 0 Then
+                                    cmd.Respond "Invalid kick strength (speaker access) value. Must be greater than or equal to 0."
+                                Else
+                                    speakerAccess = val
+                                    cmd.Respond StringFormat("Kick strength (speaker access) set to {0}.", speakerAccess)
+                                End If
+                            Else
+                                cmd.Respond "Invalid kick strength (speaker access) value. Must be a number."
+                            End If                            
 						Case Else
-							cmd.Respond "Unknwon RPK option. Valid options are: add, rem, and list"
+							cmd.Respond "Unknwon RPK option. Valid options include 'add', 'emove', and 'list'."
 					End Select
 				Else
-					cmd.Respond StringFormat("Proper syntax for this command is: {0}rpk <option> [user]", BotVars.Trigger)
+					cmd.Respond StringFormat("Proper syntax for this command is: {0}{1} <option> [value]", BotVars.Trigger, BASE_COMMAND)
 				End If
 		End Select
 	End If
 End Sub
 
+'// Returns the RPKVictim class instance for the specified user, or NOTHING if the user is not a victim.
+Function GetVictim(Username)
+    Dim i
+    For i = 0 To (victims.Count - 1)
+		If LCase(Username) = LCase(victims.Items(i).Name) Then
+			Set GetVictim = victims.Items(i)
+		End If
+	Next
+    Set GetVictim = Nothing
+End Function
+
 Class RPKVictim
-	Public Name
-	Public BanCount
+	Public Name             '// Name of the user.
+	Public KickCount        '// Kicks this session/since last ban.
+    Public TotalKicks       '// Total kicks ever.
+    
+    '// Kicks the victim for using the specified phrase.
+    Public Sub Kick(phrase)
+        BanKickUnban StringFormat("{0} Phrasekick: {1}", Me.Name, LCase(phrase)), speakerAccess, MODE_KICK
+        Me.KickCount = Me.KickCount + 1
+        If Me.KickCount > kickLimit Then
+            Me.Ban()
+        End If
+    End Sub
+    
+    '// Bans the victim for being phrasekicked too many times.
+    Public Sub Ban()
+        BanKickUnban StringFormat("{0} Phrasekick limit exceeded. [{1}]", Me.Name, speakerAccess, MODE_BAN
+        Me.ResetKicks
+    End Sub
+    
+    '// Resets a user's kick count to 0.
+    Public Sub ResetKicks()
+        Me.KickCount = 0
+    End Sub
 End Class
 								
