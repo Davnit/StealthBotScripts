@@ -1,0 +1,55 @@
+Script("Name") = "DiscordHook"
+Script("Author") = "Pyro"
+Script("Major") = 0
+Script("Minor") = 1
+Script("Description") = "Sends chat events to a Discord webhook."
+
+Public HookUrl
+Public ShowJoins
+Public ChannelFilter
+
+Sub Event_Load()
+    HookUrl = GetSettingsEntry("Hook")
+    ShowJoins = CBool(GetSettingsEntry("ShowJoins") = "True")
+    ChannelFilter = GetSettingsEntry("Channel")
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+    If Len(ChannelFilter) = 0 Or StrComp(Channel.Name, ChannelFilter, vbTextCompare) = 0 Then
+        Send Username, Message
+    End If
+End Sub
+
+Sub Event_MessageSent(MessageID, Message, Tag)
+    If Len(ChannelFilter) = 0 Or StrComp(Channel.Name, ChannelFilter, vbTextCompare) = 0 Then
+        If Left(Message, 1) <> "/" Then
+            Send Channel.Self.Name, Message
+        End If
+    End If
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, StatString, Banned)
+    If ShowJoins And (Len(ChannelFilter) = 0 Or StrComp(Channel.Name, ChannelFilter, vbTextCompare) = 0) Then
+        Send "", StringFormat("{0} [{1}ms] has joined the channel using {2}.", Username, Ping, Product)
+    End If
+End Sub
+
+Sub Event_UserLeaves(Username, Flags)
+    If ShowJoins And (Len(ChannelFilter) = 0 Or StrComp(Channel.Name, ChannelFilter, vbTextCompare) = 0) Then
+        Send "", StringFormat("{0} has left the channel.", Username)
+    End If
+End Sub
+
+Sub Send(user, msg)
+    content = "{""content"":" &  Chr(34) & msg & Chr(34)
+    If Len(user) > 0 Then
+        content = content & ", ""username"":" & Chr(34) & user & Chr(34)
+    End If
+    content = content & "}"
+    
+    With CreateObject("MSXML2.XMLHTTP")
+        .Open "POST", HookUrl
+        .SetRequestHeader "Content-Type", "application/json"
+        .Send content 
+    End With
+End Sub
