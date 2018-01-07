@@ -66,8 +66,10 @@ End Sub
 
 Function DoReplace(msg)
     DoReplace = Replace(msg, "\", "\\")
-    DoReplace = Replace(DoReplace, "{", "\{")
-    DoReplace = Replace(DoReplace, "}", "\}")
-    DoReplace = Replace(DoReplace, "'", "\'")
+    DoReplace = Replace(DoReplace, Chr(8), "\b")
+    DoReplace = Replace(DoReplace, Chr(9), "\t")
+    DoReplace = Replace(DoReplace, Chr(10), "\n")
+    DoReplace = Replace(DoReplace, Chr(12), "\f")
+    DoReplace = Replace(DoReplace, Chr(13), "\r")
     DoReplace = Replace(DoReplace, Chr(34), "\" & Chr(34))
 End Function
