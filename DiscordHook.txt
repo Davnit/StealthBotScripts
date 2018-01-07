@@ -1,7 +1,8 @@
 Script("Name") = "DiscordHook"
 Script("Author") = "Pyro"
 Script("Major") = 0
-Script("Minor") = 1
+Script("Minor") = 2
+Script("Revision") = 20180106
 Script("Description") = "Sends chat events to a Discord webhook."
 
 Public HookUrl
@@ -41,6 +42,9 @@ Sub Event_UserLeaves(Username, Flags)
 End Sub
 
 Sub Send(user, msg)
+    user = DoReplace(user)
+    msg = DoReplace(msg)
+    
     content = "{""content"":" &  Chr(34) & msg & Chr(34)
     If Len(user) > 0 Then
         content = content & ", ""username"":" & Chr(34) & user & Chr(34)
@@ -53,3 +57,11 @@ Sub Send(user, msg)
         .Send content 
     End With
 End Sub
+
+Function DoReplace(msg)
+    DoReplace = Replace(msg, "\", "\\")
+    DoReplace = Replace(DoReplace, "{", "\{")
+    DoReplace = Replace(DoReplace, "}", "\}")
+    DoReplace = Replace(DoReplace, "'", "\'")
+    DoReplace = Replace(DoReplace, Chr(34), "\" & Chr(34))
+End Function
