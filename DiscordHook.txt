@@ -5,14 +5,16 @@ Script("Minor") = 2
 Script("Revision") = 20180106
 Script("Description") = "Sends chat events to a Discord webhook."
 
-Public HookUrl
-Public ShowJoins
-Public ChannelFilter
+Public HookUrl              ' The URL of the webhook
+Public ShowJoins            ' "True" if join/leave messages should be sent.
+Public ChannelFilter        ' If set, only shows events from the specified channel.
+Public UseDiscordNameField  ' "True" to use the discord username field for messages (unreliable)
 
 Sub Event_Load()
     HookUrl = GetSettingsEntry("Hook")
     ShowJoins = CBool(GetSettingsEntry("ShowJoins") = "True")
     ChannelFilter = GetSettingsEntry("Channel")
+    UseDiscordNameField = CBool(GetSettingsEntry("UseDiscordNameField") = "True")
 End Sub
 
 Sub Event_UserTalk(Username, Flags, Message, Ping)
@@ -45,16 +47,20 @@ Sub Send(user, msg)
     user = DoReplace(user)
     msg = DoReplace(msg)
     
-    content = "{""content"":" &  Chr(34) & msg & Chr(34)
+    data = "{"
     If Len(user) > 0 Then
-        content = content & ", ""username"":" & Chr(34) & user & Chr(34)
+        If UseDiscordNameField Then
+            data = data & Chr(34) & "username" & Chr(34) & ":" & Chr(34) & user & Chr(34) & ","
+        Else
+            msg = "<" & user & "> " & msg
+        End If
     End If
-    content = content & "}"
+    data = data & Chr(34) & "content" & Chr(34) & ":" & Chr(34) & msg & Chr(34) & "}"
     
     With CreateObject("MSXML2.XMLHTTP")
         .Open "POST", HookUrl
         .SetRequestHeader "Content-Type", "application/json"
-        .Send content 
+        .Send data 
     End With
 End Sub
 
