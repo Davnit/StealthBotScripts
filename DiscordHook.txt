@@ -12,9 +12,9 @@ Public UseDiscordNameField  ' "True" to use the discord username field for messa
 
 Sub Event_Load()
     HookUrl = GetSettingsEntry("Hook")
-    ShowJoins = CBool(GetSettingsEntry("ShowJoins") = "True")
+    ShowJoins = CBool(LCase(GetSettingsEntry("ShowJoins")) = "true")
     ChannelFilter = GetSettingsEntry("Channel")
-    UseDiscordNameField = CBool(GetSettingsEntry("UseDiscordNameField") = "True")
+    UseDiscordNameField = CBool(LCase(GetSettingsEntry("UseDiscordNameField")) = "true")
 End Sub
 
 Sub Event_UserTalk(Username, Flags, Message, Ping)
