@@ -1,0 +1,75 @@
+Script("Name") = "Reverse Mimic"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 0
+
+Const BASE_COMMAND = "rmimic"
+
+Public Victim
+
+Sub Event_Load()
+    Set c = OpenCommand(BASE_COMMAND)
+    If c Is Nothing Then
+        Set c = CreateCommand(BASE_COMMAND)
+        With c
+            Set p = .NewParameter("user", True, "word")
+            With p
+                .Description = "The user to mimic."
+            End With
+            .Parameters.Add p
+            
+            .RequiredRank = 40
+            .RequiredFlags = "G"
+            
+            .Description = "Mimics a user by reversing every message they send."
+            
+            .Save
+        End With
+    End If
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+    Call processChat(Username, Message, 1)
+End Sub
+
+Sub Event_UserEmote(Username, Flags, Message)
+    Call processChat(Username, Message, 2)
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+    Call processChat(Username, Message, 3)
+End Sub
+
+Sub processChat(Username, Message, MessageType)
+    If Victim = vbNullString Then Exit Sub
+    
+    If Match(Username, Victim, True) Then
+        replyPrefix = vbNullString
+        Select Case MessageType
+            Case 1: replyPrefix = vbNullString
+            Case 2: replyPrefix = "/me "
+            Case 3: replyPrefix = "/w " & Username & Space(1)
+        End Select
+        
+        AddQ replyPrefix & StrReverse(Message)
+    End If        
+End Sub
+
+Sub Event_Command(cmd)
+    If cmd.Docs.Owner = Script("Name") Then
+        If cmd.Name = BASE_COMMAND Then
+            If cmd.IsValid Then
+                If cmd.Argument("user") <> vbNullString Then
+                    Victim = cmd.Argument("user")
+                    cmd.Respond StringFormat("Now mimicing {0} by reversing all of their text!", Victim)
+                Else
+                    Victim = vbNullString
+                    cmd.Respond "No longer reverse mimicing anyone."
+                End If
+            Else
+                cmd.Respond StringFormat("Invalid command syntax. Try {0}{1} [user] (Not specifying a user will clear the current victim.)", BotVars.Trigger, BASE_COMMAND)
+            End If
+        End If
+    End If
+End Sub
+    

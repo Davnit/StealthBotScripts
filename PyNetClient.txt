@@ -1,0 +1,1091 @@
+'PyNet Client for StealthBot.
+'Version 2.0
+'By IAreConnection and Pyro
+
+'// Changelog - (started 1/3/08)
+'// -----------------------------------------------
+'// v1.82:
+'// 	- Added support for commands via PyNet.
+'// 	- Added automatic script reloading on updates.
+'// 	- Added internal channel list.
+'// 	- Changed Channel.Self.Game to BotVars.Product so you can connect 
+'//			while not on Battle.net.
+'// v1.83:
+'//		- Fixed how statstrings are shown to make it look prettier.
+'// 		- Added on option to change the focus of chat. (/py set focus [true/false])
+'//		- Fixed a bug where space replacements weren't removed from channel names.
+'//		- Added the external .pyconnect command.
+'// v1.84:
+'//		- Bans and kicks are now automatically sent through PyNet. (requires dev31+)
+'//		- Cleaned up channel messages by removing unecesarry information.
+'//		- Updated some code to use the IIf function.
+'//		- Updated the command systems to more closely match standards.
+'//		- Added external .pyupdate command.
+'// v1.85:
+'//		- Process statstrings and the new Ping (0x06) packet
+'//		- Fixed an issue with not removing the ban from the queue before forwarding it.
+'// 	- Fixed an issue with the channel list and not being connected.
+'// v2.00:
+'//		- NOTE: This version is a complete rewrite from the old one. Noted changes are only major ones.
+'//		- Redesigned to work as a script instead of a plugin. - requires dev37++
+'//		- Added a channel class.
+'//		- Added some new variables to the user class.
+'//		- Added a class to get and hold the settings.
+'//		- Removed reliance on SBWinsock.ocx by switching to a new method of creating Winsock objects.
+'//			- Now requires Dev34++
+'//		- Updated to use DataBuffer(). -- requires dev36++
+'//		- Redesigned command processing for all commands to work the same and from more sources.
+'//		- Methods of script handling now requires dev38++
+'//		- Added a few things to begin building a file system for the script. (will be completed later)
+
+
+'// THIS VERSION NOTES:
+'	- This version was released prematurely in order to get the newer beta bots online. Many features may be broken or incomplete.
+'	
+
+
+Public Settings				'Class holding all of the PyNet related settings.
+Public pyChannel			'Holds information about the PyNet channel and all of the users in it.
+Public pyUpdates			'A list of available script updates.
+
+Public inChat				'TRUE if the bot is in pyChat, FALSE if not.
+Public pyUsername			'The bot's PyNet username, given by the server on a successful login.
+
+Public inData				'The currently inbound data on the PyNet socket.
+Public lastStat				' ...
+Public lastNull				' ...
+
+
+'Constants
+Const NOT_ENOUGH_ACCESS = "You do not have enough access to do that."
+Const DATABASE_POSTFIX = "@PyNet"
+Const PYNET_DATA_DIR = "scripts\PyNet\"
+
+'Colors
+Const vbOrange = 39423
+Const vbCarat = 13408512
+
+'///////////////////////////////////////////////
+'  - DO NOT TOUCH ANYTHING BELOW THIS BLOCK -  '
+'///////////////////////////////////////////////
+
+'Script data.
+Script("Name") = "PyNet"
+Script("Author") = "Pyro"
+Script("Major") = 2
+Script("Minor") = 0
+Script("Revision") = 0
+Script("UpdateLocation") = ""
+
+'StealthBot Events
+Sub Event_Load()	
+	'Create the socket, channel, and incoming packet buffer.
+	Call CreateObj("Winsock", "pySock")
+	Set pyChannel = Nothing
+	
+	'Create the status checking timer.
+	Call CreateObj("Timer", "pyTime")
+	pyTime.Interval = 1000
+	
+	'Make sure our file system is intact.
+	CheckFileSystem
+	
+	'Set some variables to default.
+	inChat = False
+	lastStat = vbNullString
+	lastNull = Now()
+	
+	'Create a new settings class.
+	Set Settings = New clsSettings
+	Settings.Source = GetDataDirectory() & "config.ini"
+	
+	'Should we connect?
+	If (Settings.ConnectOnLoad) Then
+		'Can we connect?
+		If ((Settings.Username <> vbNullString) And (Settings.Password <> vbNullString)) Then
+			DoConnect Settings.Server, Settings.Port
+		End If
+	End If
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	ProcessChat Username, Message, 1
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	ProcessChat Username, Message, 3
+End Sub
+
+Sub Event_PressedEnter(Text)
+	ProcessChat Channel.Self.Name, Text, 4
+End Sub
+
+Sub Event_MessageQueued(MessageID, Message, Tag)	
+	'If it's a server issued command, don't forward.
+	If Tag = "PyNetCommand" Then Exit Sub
+	
+	'Should we forward the message to the server instead of sending it straight to BNET?
+	If inChat Then	'Are we logged into PyNet?
+		
+		'Is it a moderation command?
+		If (Match(Message, "/ban *", True) Or Match(Message, "/kick *", True)) Then
+			If (Queue.Count > 1) Then	'Is our queue busy?
+				Queue.RemoveItemByID MessageID		'Remove the message from the bot's queue.
+				SendEvent 6, Message				'Send the message to PyNet.
+			End If
+		End If
+	End If
+End Sub
+
+Sub Event_Close()
+	DoDisconnect "Script closed."
+	
+	Set Settings = Nothing
+	Set pyChannel = Nothing
+	
+	inChat = False
+	inData = vbNullString
+	pyUsername = vbNullString
+End Sub
+
+
+'Socket events
+Sub pySock_Connect()
+	AddChat vbGreen, "[Py] Connected to server."
+	
+	SendData Chr(1)											'Select binary protocol.
+	Call SendLogin(Settings.Username, Settings.Password)	'Send login information.
+End Sub
+
+Sub pySock_Close()
+	AddChat vbRed, "[Py] Disconnected."
+	
+	inChat = False
+End Sub
+
+Sub pySock_DataArrival(totalBytes)	
+	Dim tmpData, tmpBuf, cap, length, id
+	tmpData = vbNullString
+	
+	pySock.GetData tmpData, vbString, totalBytes
+	inData = inData & tmpData
+	
+	Do While Len(inData) > 3
+		Set tmpBuf = DataBufferEx()
+		tmpBuf.Data = Left(inData, 4)
+		
+		cap = tmpBuf.GetByte()
+		If cap = &HDD Then
+			id = tmpBuf.GetByte()
+			length = tmpBuf.GetWORD()
+			tmpBuf.Data = tmpBuf.Data & Mid(inData, 5, length - 4)
+			
+			If length > Len(inData) Then Exit Do
+			
+			Set pyPak = New clsPyPacket
+			pyPak.Id = id
+			pyPak.Buffer = tmpBuf
+			
+			ProcessPyPacket pyPak
+			inData = Mid(inData, length + 1)
+		Else
+			AddChat vbRed, "[Py] Error: Invalid packet received. [0x" & Right("00" & Hex(cap), 2) & "]"
+			Exit Sub
+		End If
+	Loop			
+End Sub
+
+Sub pyTime_Timer()
+	If DateDiff("s", lastNull, Now()) > 420 Then
+		Set pak = New clsPyPacket
+		pak.ID = 0
+		If SendPacket(pak) Then
+			lastNull = Now()
+		Else
+			'we have been disconnected
+			DoDisconnect vbNullString
+		End If
+	End If
+	
+	str = GetSelfStatInfo()
+	If lastStat <> str Then
+		Set pak = New clsPyPacket
+		pak.ID = 2
+		pak.Buffer.Data = str
+		If SendPacket(pak) Then
+			lastStat = str
+		End If
+	End If
+End Sub
+
+
+'Custom subroutines
+Sub DoConnect(server, port)
+	'Do we have enough information to connect?
+	If ((Settings.Username = vbNullString) Or _
+		(Settings.Password = vbNullString)) Then
+		Exit Sub
+	End If
+	
+	'Make sure we're not connected.
+	If (pySock.State <> 0) Then
+		DoDisconnect vbNullString
+	End If
+	
+	'Ok, go ahead and connect.
+	pySock.RemoteHost = CStr(server)
+	pySock.RemotePort = CLng(port)
+	
+	pySock.Connect
+	
+	AddChat vbYellow, StringFormat("[Py] Connecting to {0}:{1} ...", Array(server, port))
+End Sub
+
+Sub DoDisconnect(msg)
+	If (pySock.State <> 0) Then
+		SendEvent 12, msg
+		pySock.Close
+	End If
+	inChat = False
+End Sub
+
+Sub ProcessChat(Username, Message, Source)
+	isCmd = 0
+	
+	'Is the message a command?
+	If Source = 4 Then
+		If (Left(Message, 1) = "/") Then
+			If Len(Message) > 1 Then
+				If Left(Message, 2) = "//" Then
+					isCmd = 3
+					Source = 6
+				Else
+					isCmd = 2
+				End If
+			End If
+		End If
+	Else
+		If (Left(LCase(Message), Len(BotVars.Trigger)) = LCase(BotVars.Trigger)) Then
+			If (Len(Message) > Len(BotVars.Trigger)) Then isCmd = (Len(BotVars.Trigger) + 1)
+		End If
+	End If
+	
+	'What command is it?
+	Dim cmd, ret
+	
+	If isCmd > 0 Then		
+		Message = Mid(Message, isCmd)
+		If (LCase(Left(Message, 3)) = "py ") Then
+			
+			Message = Mid(Message, 4)
+			cmd = Split(Message, " ")(0)
+			Message = Mid(Message, Len(cmd) + 2)
+			
+			Set User = GetDBEntry(Username)
+			
+			If Source = 4 Then 
+				User.Rank = 201
+				VetoThisMessage
+			End If
+			
+			If (User.Rank < 20) Then Exit Sub
+			
+			Select Case LCase(cmd)
+				Case "connect"
+					ret = ConnectCommand(User, Message)
+				Case "disconnect"
+					ret = DisconnectCommand(User, Message)
+				Case "update"
+					ret = UpdateCommand(User, Message)
+				Case "set"
+					ret = SetCommand(User, Message)
+				Case "say"
+					ret = SayCommand(User, Message)
+				Case Else
+					ret = "Invalid PyNet command."
+			End Select
+			
+			If ret <> vbNullString Then
+				ret = IIf(Source = 4, "[Py] ", "PyNet: ") & ret
+				
+				If Source = 5 Then
+					SendEvent 6, ret
+				Else
+					dsp IIf(Source = 6, 1, Source), ret, Username, vbWhite
+				End If
+			End If
+		ElseIf LCase(Left(Message, 2)) = "p " Then
+			If Len(Message) > 2 Then
+				VetoThisMessage
+				SendEvent 6, Mid(Message, 3)
+			End If
+		Else
+			If Source = 5 Then
+				Username = Username & DATABASE_POSTFIX
+				
+				Set cmd = IsCommand(Message, False)
+				If cmd.Name <> vbNullString Then
+					If HasAccess(Username, cmd.Name, cmd.Args) Then
+						ret = CommandEx(Username, cmd.Name & Space(1) & cmd.Args, False)
+						For Each r In Split(ret, Chr(0))
+							SendEvent 6, r
+						Next
+					End If
+				End If
+			End If
+		End If
+	End If
+End Sub
+
+Sub SendLogin(name, password)
+	pwHash = Sha1(CStr(password))			'Calculate the hash of the password.
+		
+	Set pak = new clsPyPacket
+	pak.ID = &H1
+	
+	pak.Buffer.InsertNTString CStr(name)	'{STRING} Username
+	pak.Buffer.InsertNonNTString pwHash		'{BYTE[20]} Password Hash
+	
+	pak.Buffer.InsertNTString IIf(isOnline, Channel.Self.Name, BotVars.Username)	'{STRING} Battle.net Username
+	
+	SendPacket pak							'Send 0x01 (PY_LOGIN)
+	
+	AddChat vbYellow, "[Py] Sending login ..."
+End Sub
+
+Sub CreateAccount(name, password)
+	pwHash = Sha1(CStr(password))			'Calculate the hash of the password.
+	
+	Set pak = new clsPyPacket
+	pak.ID = &H3
+	
+	pak.Buffer.InsertNTString CStr(name)	'{STRING} Username
+	pak.Buffer.InsertNonNTString pwHash		'{BYTE[20]} Password Hash
+	
+	SendPacket pak							'Send 0x03 (PY_ACCOUNT)
+	
+	AddChat vbYellow, "[Py] Creating account ..."
+End Sub
+
+Sub ReportVersion()
+	Set pak = new clsPyPacket
+	pak.ID = &H5
+	
+	pak.Buffer.InsertNTString StringFormat("{0}.{1}.{2}", Array(Script("Major"), Script("Minor"), Script("Revision")))
+	pak.Buffer.InsertNTString GetBotVersion()
+	pak.Buffer.InsertNTString "PyNet Client for StealthBot"
+	
+	SendPacket pak
+End Sub
+
+Sub SendChat(msg)
+	Set pak = new clsPyPacket
+	pak.ID = &H4
+	
+	pak.Buffer.InsertByte &H6				'{BYTE} Event ID
+	pak.Buffer.InsertNTString CStr(msg)		'{STRING} Data
+	
+	SendPacket pak							'Send 0x04 (PY_CHAT)
+End Sub
+
+Sub LogPyText(text)
+	logFilePath = GetDataDirectory() & "Logs\" & Replace(Date, "/", "-") & ".txt"
+	
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	If Not fso.FileExists(logFilePath) Then
+		fso.OpenTextFile logFilePath, 1, True
+	End If
+	Set logFile = fso.OpenTextFile(logFilePath, 8, True)
+	logFile.Write text
+	logFile.Close
+	Set logFile = Nothing
+	Set fso = Nothing
+End Sub
+
+Sub CheckFileSystem()
+	AddChat vbYellow, "[Py] Checking file system..."
+	fol = Array("", "logs\")
+	
+	pnf = GetDataDirectory()
+	
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	
+	For Each f In fol
+		If Not fso.FolderExists(pnf & f) Then
+			fso.CreateFolder pnf & f
+			AddChat vbGreen, "[Py] Created \" & f & "."
+		End If
+	Next
+	AddChat vbGreen, "[Py] File system is intact."
+End Sub
+
+Sub Update(url)
+	
+	Call CreateObj("Inet", "tInet")
+	
+	AddChat vbYellow, "[Py] Attempting to update..."
+	data = tInet.OpenURL(CStr(url))
+	
+	If Len(data) < 10 Then
+		AddChat vbRed, "[Py] An error occured while updating. You will need to apply the update manually."
+		Exit Sub
+	End If
+	
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	path = Script("Path")
+	
+	If fso.FileExists(path) Then
+		Set f = fso.OpenTextFile(path, 2, False)
+		f.Write data
+		f.Close
+		AddChat vbGreen, "[Py] Update successful. Reloading..."
+		Call SSC.ReloadScript
+	Else
+		AddChat vbRed, "[Py] An error occured while updating."
+		Exit Sub
+	End If
+End Sub
+
+Sub ProcessPyPacket(packet)
+	Set buf = packet.Buffer
+	buf.Position = 0
+	
+	'Make sure it's valid, just incase.
+	If buf.GetByte() = &HDD Then
+		id = buf.GetByte()
+		length = buf.GetWord()
+		
+		Select Case id
+			Case &H0	'0x00 - PY_NULL
+			
+			Case &H1 	'0x01 - PY_LOGIN
+				result = buf.GetByte()
+				Select Case result
+					Case &H0		'Success
+						selfName = buf.GetString()
+						AddChat vbGreen, "[Py] Logon complete. Entering chat..."
+						ReportVersion
+						inChat = True
+					Case &H1		'Invalid password
+						AddChat vbRed, "[Py] Invalid password."
+					Case &H2		'Account doesn't exist
+						AddChat vbRed, "[Py] Account doesn't exist."
+						CreateAccount Settings.Username, Settings.Password
+					Case &H3		'Banned
+						AddChat vbRed, "[Py] You are banned from this server."
+					Case Else
+						AddChat vRed, StringFormat("[Py] Unknown response to PY_LOGIN: 0x{0}", Array(Right("00" & Hex(result), 2)))
+				End Select
+			Case &H3	'0x03 - PY_ACCOUNT
+				result = buf.GetByte()
+				Select Case result
+					Case &H0		'Account created
+						selfName = buf.GetString()
+						AddChat vbGreen, "[Py] Account created!"
+						AddChat vbGreen, StringFormat("[Py] Logged in as {0}!", Array(selfName))
+						ReportVersion
+						inChat = True
+					Case &H1		'Account already exists.
+						AddChat vbRed, "[Py] Account already exists."
+					Case &H2, &H3	'Illegal characters.
+						AddChat vbRed, "[Py] Illegal username."
+					Case Else
+						AddChat vbRed, StringFormat("[Py] Unknown response to PY_ACCOUNT: 0x{0}", Array(Right("00" & Hex(result), 2)))
+				End Select
+			Case &H4	'0x04 - PY_CHAT
+				chatID = buf.GetDWord()
+				name = buf.GetString()
+				flags = buf.GetDWord()
+				modu = buf.GetDWord()
+				data = buf.GetString()
+				addchat vbred, data
+				Select Case chatID
+					Case &H2, &H3, &H5
+						Set user = New clsUser
+						user.Name = name
+						user.Flags = flags
+						user.Stats = data
+					Case Else
+						Set user = Nothing
+				End Select
+				
+				Select Case chatID
+					Case &H1	'CID_CHANNEL
+						Set pyChannel = New clsChannel
+						pyChannel.Name = name
+						pyChannel.Flags = flags
+						
+						AddChat vbGreen, "[Py] ", vbCarat, "Joined channel: ", vbWhite, pyChannel.Name, vbCarat, " (", vbOrange, _
+										"0x" & Right("00" & Hex(result), 2), vbCarat, ")"
+						AddChat vbCyan, "[Py] " & data
+						
+						pyTime.Enabled = True
+					Case &H2	'CID_USERPRESENT
+						If Settings.ShowUICMessage Then
+							AddChat vbGreen, "[Py] " & IIf(user.IsAdmin, "Admin ", vbNullString), vbWhite, user.Name, vbGreen, _
+								" is here as ", vbOrange, user.BNETName, vbGreen, " from channel ", vbOrange, user.BNETChannel, _
+								vbGreen, " on ", vbOrange, user.BNETRealm, vbGreen, "."
+						End If
+						
+						pyChannel.AddUser user
+					Case &H3	'CID_USERJOIN
+						AddChat vbGreen, "[Py] " & IIf(user.IsAdmin, "Admin ", vbNullString), vbWhite, user.Name, vbGreen, _
+							" has joined as ", vbOrange, user.BNETName, vbGreen, " from channel ", vbOrange, user.BNETChannel, _
+							vbGreen, " on ", vbOrange, user.BNETRealm, vbGreen, "."
+																							
+						pyChannel.AddUser user
+					Case &H4	'CID_USERLEAVE
+						AddChat vbGreen, "[Py] ", vbWhite, name, vbGreen, " has left."
+						
+						pyChannel.RemoveUser name
+					Case &H5	'CID_USERUPDATE
+						Set oUser = pyChannel.GetUser(user.Name)
+						If Not oUser Is Nothing Then
+							If ((oUser.BNETChannel <> user.BNETChannel) Or (oUser.BNETRealm <> user.BNETRealm)) Then
+								AddChat vbGreen, "[Py] ", vbWhite, user.Name, vbGreen, " is now in channel ", vbOrange, user.BNETChannel, _
+									vbGreen, " on ", vbOrange, user.BNETRealm, vbGreen, "."
+							End If
+						End If
+						
+						pyChannel.UpdateUser user.Name, user.Stats
+					Case &H6	'CID_TALK
+						AddChat vbGreen, "[Py] ", vbCarat, "<", vbOrange, name, vbCarat, "> ", vbWhite, data
+					Case &H7	'CID_PRIVMSG
+						AddChat vbGreen, "[Py] <" & IIf(modu = &H0, "From", "To") & ": ", vbOrange, name, vbCarat, "> ", vbWhite, data
+					Case &H8, &H9	'CID_INFO & CID_ERROR (resp)
+						AddChat IIf(chatID = &H8, vbCyan, vbRed), "[Py] " & data
+					Case &HA	'CID_BROADCAST
+						AddChat vbCyan, "[Py] Broadcast from ", vbWhite, name, vbCyan, ": ", vbOrange, data
+					Case &HB	'CID_COMMAND
+						AddQ data
+					Case &HC	'CID_DISCONNECTED
+						AddChat vbRed, StringFormat("[Py] Disconnected: {0}", Array(data))
+						DoDisconnect vbNullString
+					Case Else
+						AddChat vbRed, StringFormat("[Py] Received unrecognized chat event: 0x" & Array(Right("00" & Hex(chatID), 2)))
+				End Select
+			Case &H5	'PY_VERSION
+				result = buf.GetByte()
+				Select Case result
+					Case &H0	'Version OK
+						AddChat vbGreen, "[Py] Version check passed."
+					Case &H1, &H2	'Out-of-date
+						AddChat vbRed, "[Py] Version check failed. You are running an out-of-date version of the script."
+						AddChat vbYellow, "[Py] Checking for updates..."
+						msg = buf.GetString()
+						locCount = buf.GetDWord()
+						ReDim pyUpdates(1)
+						If locCount > 0 Then
+							AddChat vbGreen, "[Py] " & msg
+							For x = 1 To locCount Step 2
+								i = buf.GetDWORD()
+								s = buf.GetString()
+								AddChat vbGreen, StringFormat("[Py] Download #{0}: {1}", Array(i, s))
+								ReDim Preserve pyUpdates(i)
+								pyUpdates(i) = s
+							Next
+							If (Settings.GetBooleanEx("Updates", "Auto", True) = True) Then
+								AddChat vbWhite, "[Py] AUTO-UPDATE PLACEHOLDER"
+								'Update pyUpdates(1)
+							Else
+								AddChat vbGreen, StringFormat("[Py] Type {0}/py update [number]{0} to update to the specified script.", Array(Chr(34)))
+							End If
+						End If
+					Case Else
+						AddChat vbRed, "[Py] Unknown version reply: 0x" & Right("00" & Hex(result), 2)
+				End Select
+			Case &H6	'PY_PING
+				Set pak = new clsPyPacket
+				pak.ID = &H6
+				
+				pak.Buffer.InsertDWord buf.GetDWord()
+				SendPacket pak
+			Case Else
+				AddChat vbRed, "[Py] Received unrecognized packet: 0x" & Right("00" & Hex(id), 2)
+		End Select
+	Else
+		AddChat vbRed, "[Py] Received malformed packet."
+	End If			
+End Sub
+
+
+Function StringFormat(ByRef str, arrArgs)
+	For x = 0 To UBound(arrArgs)
+		str = Replace(str, "{" & x & "}", CStr(arrArgs(x)))
+	Next
+	StringFormat = str
+End Function
+
+Function IIf(cond, a, b)
+	If cond Then IIf = a Else IIf = b
+End Function
+
+Function SendPacket(packet)
+	str = packet.GetData()
+	SendPacket = SendData(str)
+End Function
+
+Function SendData(data)
+	On Error Resume Next
+	pySock.SendData data
+	SendData = CBool(Err.Number = 0)
+	Err.Clear
+End Function
+
+Function SendEvent(eid, msg)
+	Set ePak = new clsPyPacket
+	ePak.ID = &H4
+	
+	ePak.Buffer.InsertDWORD eid
+	ePak.Buffer.InsertNTString CStr(msg)
+	
+	SendEvent = SendPacket(ePak)
+End Function
+
+Function GetDataDirectory()
+	GetDataDirectory = BotPath() & PYNET_DATA_DIR & IIf(Right(PYNET_DATA_DIR, 1) = "\", "", "\")
+End Function
+
+Function GetSelfStatInfo()
+	Set buf = DataBufferEx()
+	With buf
+		.InsertNTString Channel.Name
+		.InsertDWORD Channel.Self.Flags
+		.InsertDWORD GetRealmID()
+		.InsertNTString BotVars.Server
+		.InsertNTString BotVars.Product
+	End With
+	GetSelfStatInfo = buf.Data
+End Function
+
+Function GetRealmID()
+	Select Case LCase(BotVars.Gateway)
+		Case "azeroth", "useast" : r = 1
+		Case "lordaeron", "uswest" : r = 2
+		Case "northrend", "europe" : r = 3
+		Case "kalimdor", "asia" : r = 4
+		Case Else : r = 5
+	End Select
+	
+	GetRealmID = IIf(IsOnline, r, 0)
+End Function
+
+'Commands
+Function ConnectCommand(User, Message)
+	If (User.Rank >= 90) Then
+		If Settings.Username = vbNullString Then
+			ConnectCommand = "The bot cannot connect because no username has been set."
+			Exit Function
+		End If
+			
+		If Settings.Password = vbNullString Then
+			ConnectCommand = "The bot cannot connect because no password has been set."
+			Exit Function
+		End If
+		
+		If Message <> vbNullString Then
+			s = Split(Message, ":")
+			Settings.Server = s(0)
+			If UBound(s) > 0 Then
+				Settings.Port = s(1)
+			End If
+		End If
+		
+		Call DoConnect(Settings.Server, Settings.Port)
+		
+		ConnectCommand = vbNullString
+	Else
+		ConnectCommand = NOT_ENOUGH_ACCESS
+	End If
+End Function
+
+Function DisconnectCommand(User, Message)
+	If (User.Rank >= 90) Then
+		Call DoDisconnect(Message)
+		
+		DisconnectCommand = vbNullString
+	Else
+		DisconnectCommand = NOT_ENOUGH_ACCESS
+	End If
+End Function
+
+Function UpdateCommand(User, Message)
+	If (User.Rank >= 100) Then
+		If (IsNumeric(Message) And (UBound(pyUpdates) >= Int(Message))) Then
+			Updated = Update(pyUpdates(Int(Message)))
+		Else
+			Updated = Update(Message)
+		End If
+		Select Case Updated
+			Case 0
+				UpdateCommand = "Update failed."
+			Case 1
+				UpdateCommand = "Update successful."
+			Case Else
+				UpdateCommand = "Unknown update status."
+		End Select
+	Else
+		UpdateCommand = NOT_ENOUGH_ACCESS
+	End If
+End Function
+
+Function SetCommand(User, Message)
+	If (User.Rank >= 100) Then
+		s = Split(Message, " ")
+		If UBound(s) < 1 Then
+			SetCommand = "No value specified."
+			Exit Function
+		End If
+		
+		Select Case LCase(s(0))
+			Case "username"
+				Settings.Username = s(1)
+				SetCommand = StringFormat("Username set to {0}.", Array(s(1)))
+			Case "password"
+				Settings.Password = s(1)
+				SetCommand = "New password set."
+			Case "server"
+				Settings.Server = s(1)
+				SetCommand = StringFormat("Server set to {0}.", Array(s(1)))
+			Case "port"
+				Settings.Port = CInt(s(1))
+				SetCommand = StringFormat("Port set to {0}.", Array(s(1)))
+			Case Else
+				If UBound(s) < 2 Then
+					SetCommand = "Invalid set parameter."
+					Exit Function
+				Else
+					Settings.SetString s(0), s(1), s(2)
+					AddChat vbGreen, StringFormat("{0}.{1} set to {2}.", Array(s(0), s(1), s(2)))
+				End If
+		End Select
+	Else
+		SetCommand = NOT_ENOUGH_ACCESS
+	End If
+End Function
+
+Function SayCommand(User, Message)
+	If (User.Rank >= 100) Then
+		b = SendEvent(6, Message)
+		If (Not b) Then
+			SayCommand = "Message could not be sent."
+		End If
+	Else
+		SayCommand = NOT_ENOUGH_ACCESS
+	End If
+End Function
+
+Class clsPyPacket
+	Private m_id, m_buf
+	
+	Private Sub Class_Initialize()
+		m_id = 0
+		Set m_buf = DataBufferEx
+	End Sub
+	
+	Private Sub Class_Terminate()
+		Set m_buf = Nothing
+	End Sub
+	
+	Public Property Get ID
+		ID = m_id
+	End Property
+	
+	Public Property Let ID(value)
+		m_id = value
+	End Property
+	
+	Public Property Get Length
+		Length = (m_buf.Length + 4)
+	End Property
+	
+	Public Property Get Buffer
+		Set Buffer = m_buf
+	End Property
+	
+	Public Property Let Buffer(value)
+		Set m_buf = value
+	End Property
+	
+	Public Function GetData()
+		Set tBuf = DataBufferEx
+		tBuf.InsertByte &HDD
+		tBuf.InsertByte CByte(m_id)
+		tBuf.InsertWORD m_buf.Length + 4
+		tBuf.InsertNonNTString m_buf.Data
+		
+		GetData = tBuf.Data
+	End Function
+	
+End Class
+
+Class clsChannel
+	Private m_name, m_flags, m_users, m_joinTime
+	
+	Private Sub Class_Initialize()
+		Set m_users = CreateObject("Scripting.Dictionary")
+		m_joinTime = Now()
+	End Sub
+	
+	Public Property Get Name
+		Name = m_name
+	End Property
+	
+	Public Property Let Name(value)
+		m_name = value
+	End Property
+	
+	Public Property Get Flags
+		Flags = m_flags
+	End Property
+	
+	Public Property Let Flags(value)
+		m_flags = value
+	End Property
+	
+	Public Property Get JoinTime
+		JoinTime = m_joinTime
+	End Property
+	
+	
+	Public Function Users()
+		For x = 1 To m_users.Count
+			ReDim Preserve Users(x)
+			Set Users(x) = m_users.Item(x)
+		Next
+	End Function
+	
+	Public Function GetUser(name)
+		If m_users.Exists(name) Then
+			Set GetUser = m_users(name)
+		Else
+			Set GetUser = Nothing
+		End If
+	End Function
+	
+	
+	Public Function AddUser(user)
+		AddUser = Not m_users.Exists(user.Name)
+		If AddUser Then
+			m_users.Add user.Name, user
+		Else
+			UpdateUser user.Name, user.Stats
+		End If
+	End Function
+	
+	Public Function RemoveUser(name)
+		RemoveUser = m_users.Exists(name)
+		If RemoveUser Then
+			m_users.Remove name
+		End If
+	End Function
+	
+	Public Function UpdateUser(name, newData)
+		UpdateUser = m_users.Exists(name)
+		If UpdateUser Then
+			m_users(name).Stats = newData
+		End If
+	End Function
+	
+	Public Sub ClearUsers()
+		Set m_users = CreateObject("Scripting.Dictionary")
+	End Sub			
+End Class
+
+Class clsUser
+	Private m_name, m_flags, m_stats, m_joinTime, m_lastTalk
+	
+	Private Sub Class_Initialize()
+		m_joinTime = Now()
+		m_lastTalk = Now()
+	End Sub
+	
+	Public Property Get Name
+		Name = m_name
+	End Property
+	
+	Public Property Let Name(value)
+		m_name = value
+	End Property
+	
+	Public Property Get Flags
+		Flags = m_flags
+	End Property
+	
+	Public Property Let Flags(value)
+		m_flags = value
+	End Property
+	
+	Public Property Get Stats
+		Stats = Join(m_stats, Chr(2))
+	End Property
+	
+	Public Property Let Stats(value)
+		m_stats = Split(value, Chr(2))
+	End Property
+	
+	Public Property Get JoinTime
+		JoinTime = m_joinTime
+	End Property
+	
+	Public Property Let JoinTime(value)
+		m_joinTime = value
+	End Property
+	
+	Public Property Get LastTalk
+		LastTalk = m_lastTalk
+	End Property
+	
+	Public Property Let LastTalk(value)
+		m_lastTalk = value
+	End Property
+	
+	Public Property Get IsAdmin
+		IsAdmin = CBool(m_stats(6) = "1")
+	End Property
+	
+	Public Property Get Ping
+		Ping = CInt(m_stats(7))
+	End Property
+	
+	Public Property Get BNETName
+		BNETName = m_stats(0)
+	End Property
+	
+	Public Property Get BNETChannel
+		BNETChannel = m_stats(1)
+	End Property
+	
+	Public Property Get BNETRealmID
+		BNETRealmID = CInt(m_stats(2))
+	End Property
+	
+	Public Property Get BNETRealm
+		BNETRealm = m_stats(3)
+	End Property
+	
+	Public Property Get BNETFlags
+		BNETFlags = m_stats(4)
+	End Property
+	
+	Public Property Get BNETGame
+		BNETGame = m_stats(5)
+	End Property
+End Class
+
+Class clsSettings
+	Private m_configPath
+	
+	Public Property Get Source
+		Source = m_configPath
+	End Property
+	
+	Public Property Let Source(value)
+		m_configPath = value
+		
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		If Not fso.FileExists(m_configPath) Then
+			fso.CreateTextFile m_configPath
+		End If
+	End Property
+	
+	Public Property Get Username
+		Username = GetString("Connection", "Username")
+	End Property
+	
+	Public Property Let Username(value)
+		SetString "Connection", "Username", value
+	End Property
+	
+	Public Property Get Password
+		Password = GetString("Connection", "Password")
+	End Property
+	
+	Public Property Let Password(value)
+		SetString "Connection", "Password", value
+	End Property
+	
+	Public Property Get Server
+		Server = GetStringEx("Connection", "Server", "pynet.no-ip.org")
+	End Property
+	
+	Public Property Let Server(value)
+		SetString "Connection", "Server", value
+	End Property
+	
+	Public Property Get Port
+		Port = GetIntegerEx("Connection", "Port", 1337)
+	End Property
+
+	Public Property Let Port(value)
+		SetInteger "Connection", "Port", value
+	End Property
+	
+	Public Property Get ConnectOnLoad
+		ConnectOnLoad = GetBooleanEx("Connection", "ConnectOnLoad", True)
+	End Property
+	
+	Public Property Let ConnectOnLoad(value)
+		SetBoolean "Connection", "ConnectOnLoad", value
+	End Property
+	
+	Public Property Get ShowUICMessage
+		ShowUICMessages = GetBooleanEx("Interface", "ShowUIC", False)
+	End Property
+	
+	Public Property Let ShowUICMessage(value)
+		SetBoolean "Interface", "ShowUIC", value
+	End Property
+	
+	Public Property Get UseForm
+		UseForm = GetBooleanEx("Interface", "UseForm", True)
+	End Property
+	
+	Public Property Let UseForm(value)
+		SetBoolean "Interface", "UseForm", value
+	End Property
+	
+	
+	'ini functions
+	Public Function GetString(header, key)
+		GetString = GetStringEx(header, key, vbNullString)
+	End Function
+	
+	Public Function GetStringEx(header, key, def)
+		s = GetConfigEntry(header, key, m_configPath)
+		If s = vbNullString Then s = def
+		GetStringEx = CStr(s)
+	End Function
+	
+	Public Function GetBoolean(header, key)
+		GetBoolean = Me.GetBooleanEx(header, key, False)
+	End Function
+	
+	Public Function GetBooleanEx(header, key, def)
+		b = Me.GetString(header, key)
+		If b = vbNullString Then b = def
+		GetBooleanEx = CBool(b)
+	End Function
+	
+	Public Function GetInteger(header, key)
+		GetInteger = GetIntegerEx(header, key, 0)
+	End Function
+	
+	Public Function GetIntegerEx(header, key, def)
+		i = GetString(header, key)
+		If i = vbNullString Then i = def
+		GetIntegerEx = CInt(i)
+	End Function
+	
+	Public Sub SetString(header, key, value)
+		WriteConfigEntry header, key, value, m_configPath
+	End Sub
+	
+	Public Sub SetBoolean(header, key, value)
+		SetString header, key, CStr(value)
+	End Sub
+	
+	Public Sub SetInteger(header, key, value)
+		SetString header, key, CStr(value)
+	End Sub
+End Class

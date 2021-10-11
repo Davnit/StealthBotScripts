@@ -1,0 +1,236 @@
+Option Explicit
+
+Script("Name") = "StealthBot Auth Check"
+Script("Author") = "Pyro"
+Script("Major") = 1
+Script("Minor") = 0
+
+Public objInet
+
+Const checkCommand = "getauth"
+Const baseUrl = "http://www.stealthbot.net/board/"
+Const authScript = "sbauth.php"
+Const userScript = "index.php"
+
+Sub Event_Load()
+	Dim cmd, param
+	
+	Set objInet = CreateObj("Inet", "objInet")
+	
+	Set cmd = OpenCommand(checkCommand)
+	If cmd Is Nothing Then
+		Set cmd = CreateCommand(checkCommand)
+		With cmd
+			.Description = "Returns StealthBot beta authorization information on the specified user."
+			.RequiredRank = 20
+			
+			Set param = .NewParameter("username", True, "word")
+			param.Description = "The name of the user to return information on."
+			.Parameters.Add param
+			
+			.Save
+		End With
+	End If		
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+	
+End Sub
+
+Sub Event_Command(Command)
+	Dim info, name, x
+	
+	Select Case Command.Name
+		Case checkCommand:
+			If Command.IsValid Then
+				If Len(Command.Argument("username")) > 0 Then
+					name = Command.Argument("username")
+				Else
+					name = Command.Username
+				End If
+				info = GetAuthInfo(name, Command.IsLocal)
+				If Not (info = vbNullString) Then
+					info = Split(info, Chr(0))
+					For x = 0 To UBound(info)
+						Command.Respond info(x)
+					Next
+				Else
+					Command.Respond "That user is not authorized to use the StealthBot beta."
+				End If
+			End If
+	End Select
+End Sub
+
+Function GetAuthInfo(BnetUsername, bLong)
+	Dim prof
+	Set prof = GetProfileInfo(BnetUsername)
+	If Not (prof Is Nothing) Then
+		Dim info
+		If bLong Then
+			GetAuthInfo = GetLongProfileInfo(BnetUsername, prof)
+		Else
+			GetAuthInfo = GetShortProfileInfo(BnetUsername, prof)
+		End If
+	Else
+		GetAuthInfo = vbNullString
+	End If
+End Function
+
+Function GetAuthed(BnetUsername)
+	GetAuthed = Not (GetMemberId(BnetUsername) = "0")
+End Function
+
+Function GetMemberId(BnetUsername)
+	Dim id
+	id = objInet.OpenURL(baseUrl & authScript & "?username=" & BnetUsername & "&returnMemberID")
+	If IsNumeric(id) Then
+		GetMemberId = CInt(id)
+	Else
+		GetMemberId = 0
+	End If
+End Function
+
+Function GetProfileInfo(BnetUsername)
+	Dim memId
+	memId = GetMemberId(RemoveRealm(BnetUsername))
+	If memId > 0 Then
+		Set GetProfileInfo = New ProfileInformation
+		If GetProfileInfo.LoadProfileInfo(memId) = False Then
+			Set GetProfileInfo = Nothing
+		End If
+	Else
+		Set GetProfileInfo = Nothing
+	End If
+End Function
+
+Function GetShortProfileInfo(Name, Profile)
+	GetShortProfileInfo = Name & " is authed under user " & Profile.DisplayName & " (ID: " & Profile.MemberId & "), a " & Profile.MemberGroup & " who joined on " & Profile.JoinDate & " and has " & Profile.CumulativePosts & " posts."
+End Function
+
+Function GetLongProfileInfo(Name, Profile)
+	GetLongProfileInfo = _
+		"Account " & Name & " is authed under user " & Profile.DisplayName & " (ID: " & Profile.MemberId & ")." & Chr(0) & _
+		" - Account details: " & Chr(0) & _
+		"   - Group: " & Profile.MemberGroup & Chr(0) & _
+		"   - Posts: " & Profile.CumulativePosts & Chr(0) & _
+		"   - Joined: " & Profile.JoinDate & Chr(0) & _
+		"   - Profile: " & baseUrl & userScript & "?showuser=" & Profile.MemberId
+End Function
+
+Function RemoveRealm(ByRef text)
+	Dim i, realm, realmArr
+	realmArr = Array("Azeroth", "Lordaeron", "Northrend", "Kalimdor", "USEast", "USWest", "Europe", "Asia")
+	For Each realm In realmArr
+		i = InStr(text, "@" & realm)
+		If i > 0 Then
+			text = Left(text, i)
+		End If
+	Next
+	RemoveRealm = text
+End Function
+
+Class ProfileInformation
+	Public MemberId
+	Public DisplayName
+	Public MemberTitle
+	Public JoinDate
+	Public MemberGroup
+	Public LocalTime
+	Public CumulativePosts
+	Public HomePage
+	Public Birthday
+	Public Location
+	Public Interests
+	
+	Public AIM
+	Public MSN
+	Public ICQ
+	Public Yahoo
+	
+	Public Signature
+	Public Avatar
+	Public Picture
+	
+	Private m_status
+	
+	Public Function LoadProfileInfo(memId)
+		On Error Resume Next
+		
+		MemberId = memId
+		Dim profile
+		
+		Err.Clear
+		profile = objInet.OpenURL(baseUrl & userScript & "?showuser=" & MemberId)
+		If profile <> vbNullString Then
+			DisplayName = Split(Split(profile, "<div id=""profilename"">")(1), "</div>")(0)
+			
+			Avatar = Split(Split(profile, "<div>")(1), "</div>")(0)
+			
+			MemberTitle = Split(Split(Mid(profile, InStr(profile, Avatar)), "<div>")(1), "</div>")(0)
+			
+			MemberGroup = Split(Split(Mid(profile, InStr(profile, "<div class=""postdetails"">")), "Member Group: ")(1), "<br />")(0)
+			If LCase(Right(MemberGroup, 1)) = "s" Then
+				MemberGroup = Left(MemberGroup, Len(MemberGroup) - 1)
+			End If
+			
+			JoinDate = Split(Split(Mid(profile, InStr(profile, "<div class=""postdetails"">")), "Joined: ")(1), "</div>")(0)
+				JoinDate = Replace(Replace(JoinDate, vbLf, vbNullString), vbTab, vbNullString)
+				
+			LocalTime = Split(Split(Mid(profile, InStr(profile, "User's local time</b></td>")), "<td class=""row1"">")(1), "</td>")(0)
+			
+			CumulativePosts = Split(Split(Mid(profile, InStr(profile, "Total Cumulative Posts</b></td>")), " class=""row1""><b>")(1), "</b>")(0)
+			
+			m_status = Split(Split(Mid(profile, InStr(profile, "<b>Status</b></td>")), "<td class=""row1"">")(1), "</td>")(0)
+			
+			AIM = Split(Split(Mid(profile, InStr(profile, "alt='AIM' />")), " class=""row2"">")(1), "</td>")(0)
+			
+			Yahoo = Split(Split(Mid(profile, InStr(profile, "alt='Yahoo' />")), " class=""row2"">")(1), "</td>")(0)
+			
+			ICQ = Split(Split(Mid(profile, InStr(profile, "alt='ICQ' />")), " class=""row2"">")(1), "</td>")(0)
+			
+			MSN = Split(Split(Mid(profile, InStr(profile, "alt='MSN' />")), " class=""row2"">")(1), "</td>")(0)
+			
+			HomePage = Split(Split(Mid(profile, InStr(profile, "<b>Home Page</b></td>")), "<a href='")(1), "' target='")(0)
+			
+			Birthday = Split(Split(Mid(profile, InStr(profile, "<b>Birthday</b></td>")), "<td class=""row1"">")(1), "</td>")(0)
+			
+			Location = Split(Split(Mid(profile, InStr(profile, "<b>Location</b></td>")), "<td class=""row1"">")(1), "</td>")(0)
+			
+			Interests = Split(Split(Mid(profile, InStr(profile, "<b>Interests</b></td>")), "<td class=""row1"">")(1), "</td>")(0)
+			
+			Signature = Split(Split(profile, "<div class=""signature"">")(1), "</div>")(0)
+			
+			Picture = Split(Split(Mid(profile, InStr(profile, "<div class=""postdetails"">")), " class=""row1"">")(1), "</td>")(0)
+			
+			'// Parse out picture URL's.
+			If (Not (Avatar = vbNullString)) Then
+				Avatar = Split(Split(Avatar, "<img src='")(1), "' border='")(0)
+			End If
+			If (Not (Picture = vbNullString)) Then
+				Picture = Split(Split(Picture, "<img src=""")(1), """ ")(0)
+			End If
+		Else
+			'AddChat vbWhite, "Page is blank."
+			LoadProfileInfo = False
+			Exit Function
+		End If
+		
+		LoadProfileInfo = (Err.Number = 0)
+		Err.Clear
+	End Function
+	
+	Public Property Get Status()
+		Status = m_status
+	End Property
+	
+	Public Property Let Status(value)
+		m_status = value
+	End Property
+End Class
+		
+Class InfoRequest
+	Public Results
+	Public RequestTime
+	Public Key
+End Class
+	

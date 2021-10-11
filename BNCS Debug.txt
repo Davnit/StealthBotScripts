@@ -1,0 +1,495 @@
+
+Script("Name") = "BNCS Debugger"
+Script("Author") = "Davnit"
+Script("Description") = "Prints diagnostic information about the BNCS protocol as observed"
+Script("Major") = 0
+Script("Minor") = 1
+
+
+Public CRevData
+Public EnteredChat
+Public LastPacketSent
+Public LastPacketReceived
+Public UserDataRequests
+
+
+Private NLS_LOGON_TYPES
+Private FRIEND_STATUS_FLAGS
+Private FRIEND_LOCATION_IDS
+
+
+'// BATTLE NET PACKET REQUESTS
+Sub RequestIconData()
+    Set Buffer = DataBufferEx()
+    Call Buffer.SendPacket(&H2D)
+End Sub
+
+Sub GetFiletime(RequestId, Unknown, Filename)
+    Set Buffer = DataBufferEx()
+    Buffer.InsertDWord RequestId
+    Buffer.InsertDWord Unknown
+    Buffer.InsertNTString Filename
+    Call Buffer.SendPacket(&H33)
+End Sub
+
+Sub RequestFriendsListUpdate()
+    Set Buffer = DataBufferEx()
+    Call Buffer.SendPacket(&H65)
+End Sub
+
+Sub RequestFriendUpdate(FriendId)
+    Set Buffer = DataBufferEx()
+    Buffer.InsertByte(FriendId)
+    Call Buffer.SendPacket(&H66)
+End Sub
+
+Sub RequestNews(StartTS)
+    Set Buffer = DataBufferEx()
+    Buffer.InsertDWord StartTS
+    Call Buffer.SendPacket(&H46)
+End Sub
+
+'// UTILITY FUNCTIONS
+Function FormatVersion(Data)
+    V = vbNullString
+    For i = 1 To 4
+        If Mid(Data, i, 1) <> Chr(0) Then
+            V = V & Mid(Data, i, 1)
+        End IF
+    Next
+    FormatVersion = V
+End Function
+
+Function HexFormat(Value, Size)
+    HexFormat = Left(Hex(Value) & String("0", Size), Size)
+End Function
+
+Function BytesToHex(Value)
+    V = vbNullString
+    For i = 1 To Len(Value)
+        V = V & Left(Hex(Asc(Mid(Value, i, 1))) & "00", 2)
+    Next
+    BytesToHex = V
+End Function
+
+Function FlagsToString(Value, FlagValues)
+    s = vbNullString
+    For Each Flag In FlagValues.Keys()
+        If Value & Flag = Flag Then
+            s = s & FlagValues.Item(Flag) & "|"
+        End If
+    Next
+    If Len(s) > 0 Then
+        FlagsToString = Left(s, Len(s) - 1)
+    Else
+        FlagsToString = "None"
+    End If
+End Function
+
+Function TimestampToDate(TimestampVal)
+    TimestampToDate = DateAdd("s", TimestampVala, "1970/1/1")
+End Function
+
+
+Function InitCRev(Archive, Seed, Timestamp)
+    Set CRevData = CreateObject("Scripting.Dictionary")
+    With CRevData
+        .Add "Archive", Archive
+        .Add "Seed", Seed
+        .Add "Timestamp", Timestamp
+    End With
+End Function
+
+
+Sub Event_Load()
+    Set NLS_LOGON_TYPES = CreateObject("Scripting.Dictionary")
+    With NLS_LOGON_TYPES
+        .Add &H0, "XSha1"
+        .Add &H1, "NLSv1"
+        .Add &H2, "NLSv2"
+    End With
+    
+    Set FRIEND_STATUS_FLAGS = CreateObject("Scripting.Dictionary")
+    With FRIEND_STATUS_FLAGS
+        .Add &H1, "Mutual"
+        .Add &H2, "DND"
+        .Add &H4, "Away"
+    End With    
+    
+    Set FRIEND_LOCATION_IDS = CreateObject("Scripting.Dictionary")
+    With FRIEND_LOCATION_IDS
+        .Add &H0, "Offline"
+        .Add &H1, "Not in chat"
+        .Add &H2, "In chat"
+        .Add &H3, "In public game"
+        .Add &H4, "In private game"
+        .Add &H5, "Mutual in private game"
+    End With
+    
+    EnteredChat = Len(Channel.Name) > 0
+    LastPacketSent = Array()
+    LastPacketReceived = Array()
+    
+    Set UserDataRequests = CreateObject("Scripting.Dictionary")
+    
+    Set CRevData = Nothing
+End Sub
+
+
+Sub Event_LoggedOn(Username, Productt)
+    EnteredChat = True
+End Sub
+
+
+Sub Event_LoggedOff()
+    If EnteredChat = True Then Exit Sub
+    
+    If UBound(LastPacketSent) = -1 And UBound(LastPacketReceived) = -1 Then
+        AddChat Color.Cyan, "[DEBUG] Connection failed. No packets were exchanged."
+        Exit Sub
+    End If
+    
+    'AddChat Color.Cyan, "[DEBUG] Connection failed. Dumping last packets..."
+    
+    If UBound(LastPacketSent) = 3 Then
+        'AddChat Color.Cyan, StringFormat("[DEBUG] Last packet sent 0x{0} (length: {1}):", _
+        '                                    Hex(LastPacketSent(1)), LastPacketSent(2))
+        Set Buffer = DataBufferEx()
+        Buffer.Data = LastPacketSent(3)
+        'AddChat Color.Cyan, Buffer.DebugOutput()
+    End IF
+    
+    If UBound(LastPacketReceived) = 3 Then
+        'AddChat Color.Cyan, StringFormat("[DEBUG] Last packet received 0x{0} (length: {1}):", _
+        '                                    Hex(LastPacketReceived(1)), LastPacketReceived(2))
+        Set Buffer = DataBufferEx()
+        Buffer.Data = LastPacketReceived(3)
+        'AddChat Color.Cyan, Buffer.DebugOutput()
+    End If       
+    
+    LastPacketSent = Array()
+    LastPacketReceived = Array()
+    EnteredChat = False
+End Sub
+
+
+Sub Event_PacketReceived(Protocol, PID, Length, Data)
+    If Protocol <> "BNCS" Then Exit Sub
+    
+    Set Buffer = DataBufferEx()
+    Buffer.Data = Mid(Data, 5)
+            
+    If PID = &H06 Then
+        ' S->C SID_STARTVERSIONING
+        CRevTimestamp = Buffer.GetFileTime()
+        CRevArchive = Buffer.GetString()
+        CRevFormula = Buffer.GetString()
+        
+        Call InitCRev(CRevArchive, CRevFormula, CRevTimestamp)
+        CRevData.Add "Mechanism", "OLS"
+        
+        If Left(CRevArchive, 9) = "lockdown-" Then
+            CRevFormula = "0x" & BytesToHex(CRevFormula)
+        End If
+    
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] OLS AUTH (0x06) - Archive: {0}, Timestamp: {2}, Formula: {1}", CRevArchive, CRevFormula, CRevTimestamp)
+            
+    ElseIf PID = &H07 Then
+        ' S->C SID_REPORTVERSION
+        Result = Buffer.GetDWord()
+        If Result = 2 Then 
+            Call RequestIconData()
+        End If
+        
+    ElseIf PID = &H0F Then
+        ' S->C SID_CHATEVENT
+        EventID = Buffer.GetDWord()
+        Flags = Buffer.GetDWord()
+        Ping = Buffer.GetDWord()
+        IPAddress = Buffer.GetDWord()
+        AccountNum = Buffer.GetDWord()
+        RegAuth = Buffer.GetDWord()
+        Username = Buffer.GetString()
+        Message = Buffer.GetString()
+        
+        If IPAddress <> 0 Then 
+            AddChat Color.Cyan, StringFormat("[DEBUG] IP address sent in user event: '{0}' -> {1}", Username, IPAddress)
+        End If
+        If AccountNum <> -1163005939 Then
+            AddChat Color.Cyan, StringFormat("[DEBUG] Account number sent in user event: '{0}' -> {1}", Username, AccountNum)
+        End If
+        If RegAuth <> -1163005939 Then
+            AddChat Color.Cyan, StringFormat("[DEBUG] Registration authority sent in user event: '{0}' -> {1}", Username, RegAuth)
+        End If
+    
+    ElseIf PID = &H26 Then
+        ' S->C SID_READUSERDATA
+        NumAccs = Buffer.GetDWord()
+        NumKeys = Buffer.GetDWord()
+        ReqID = Buffer.GetDWord()
+        
+        If NumAccs = 0 And NumKeys = 0 Then
+            AddChat Color.Cyan, StringFormat("[DEBUG] User data request ID #{0} returned empty.", ReqID)
+        
+        ElseIf UserDataRequests.Exists(ReqID) Then
+            Set obj = UserDataRequests.Item(ReqID)
+            UserDataRequests.Remove ReqID
+            
+            AddChat Color.Cyan, StringFormat("[DEBUG] User data request ID #{0} returned with {1} key(s) for {2} account(s).", ReqID, NumKeys, NumAccs)
+            
+            For i = 0 To NumAccs - 1
+                AddChat Color.Cyan, StringFormat("[DEBUG]     User data for account '{0}':", obj.AccountList(i))
+                
+                For j = 0 To NumKeys - 1
+                    AddChat Color.Cyan, StringFormat("[DEBUG]      -> '{0}' = '{1}'", obj.KeyList(j), Buffer.GetString())
+                Next
+            Next
+            
+        Else
+            ReDim ReturnedKeys(NumKeys - 1)
+            For i = 1 To NumKeys
+                ReturnedKeys(i - 1) = Buffer.GetString()
+            Next
+            
+            AddChat Color.Cyan, StringFormat("[DEBUG] Received {0} user key(s) for umatched request with ID #{1}:", NumKeys, ReqID)
+            For Each Value In ReturnedKeys
+                AddChat Color.Cyan, StringFormat("[DEBUG]    -> '{0}'", Value)
+            Next
+        End If   
+        
+    ElseIf PID = &H2D Then
+        ' S->C SID_GETICONDATA
+        Timestamp = Buffer.GetFileTime()
+        Filename = Buffer.GetString()
+        
+        AddChat Color.Cyan, StringFormat("[DEBUG] Icon file: {0} (Timestamp: {1})", Filename, IIf(Timestamp = 0, 0, Timestamp))
+        
+    ElseIf PID = &H33 Then
+        ' S->C SID_GETFILETIME
+        RequestID = Buffer.GetDWord()
+        Unknown = Buffer.GetDWord()
+        UpdateTime = Buffer.GetFileTime()
+        Filename = Buffer.GetString()
+        
+        AddChat Color.Cyan, StringFormat("[DEBUG] Filetime: '{0}' -> {1} (ReqId: {2}, Unknown: {3})", _
+            Filename, IIf(UpdateTime = 0, 0, UpdateTime), RequestID, Unknown)
+            
+    ElseIf PID = &H46 Then
+        ' S->C SID_NEWS
+        NumEntries = Buffer.GetByte()
+        LastLogon = Buffer.GetDWord()
+        OldestTS = TimestampToDate(Buffer.GetDWord())
+        NewestTS = TimestampToDate(Buffer.GetDWord())
+        
+        AddChat Color.Cyan, StringFormat("[DEBUG] News info - count: {0}, oldest: {1}, newest: {2}", NumEntries, OldestTS, NewestTS)
+        
+        For i = 1 To NumEntries
+            EntryTS = TimestampToDate(Buffer.GetDWord())
+            Content = Buffer.GetString()
+            
+            AddChat Color.Cyan, StringFormat("[DEBUG]    + #{0} - time: {1}, content: {2}{3}", _
+                i, EntryTS, Left(Content, 50), IIf(Len(Content) > 50, "[...]", vbNullString))
+        Next
+            
+    ElseIf PID = &H4A Or PID = &H4C Then
+        ' S->C SID_OPTIONALWORK
+        WorkFile = Buffer.GetString()
+        AddChat Color.Cyan, StringFormat("[DEBUG] {0} work requested: {1}", IIf(PID = &H4A, "Optional", "Required"), WorkFile)
+        
+    ElseIf PID = &H50 Then
+        ' S->C SID_AUTH_INFO
+        LogonType = Buffer.GetDWORD()
+        If NLS_LOGON_TYPES.Exists(LogonType) Then
+            LogonType = NLS_LOGON_TYPES.Item(LogonType)
+        Else
+            LogonType = "Unknown (0x" & Hex(LogonType) & ")"
+        End If
+        
+        ServerToken = Buffer.GetDWORD()
+        UDPVal = Buffer.GetDWORD()
+        CRevTimestamp = Buffer.GetFileTime()
+        CRevArchive = Buffer.GetString()
+        CRevFormula = Buffer.GetString()
+        
+        Call InitCRev(CRevArchive, CRevFormula, CRevTimestamp)
+        CRevData.Add "Mechanism", "NLS"
+        CRevData.Add "Logon Type", LogonType
+        
+        If Left(CRevArchive, 9) = "lockdown-" Then
+            CRevFormula = "0x" & BytesToHex(CRevFormula)
+            AddChat Color.Red, StringFormat("[DEBUG] WARNING! Unusual client authentication request: Lockdown via NLS")
+        End If
+        
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] NLS AUTH (0x50) - Logon: {0}, Archive: {1}, Formula: {2}", LogonType, CRevArchive, CRevFormula)
+            
+    ElseIf PID = &H51 Then
+        ' S->C SID_AUTH_CHECK
+        Result = Buffer.GetDWord()
+        If Result = 0 Then 
+            Call RequestIconData()
+        End If
+        
+    ElseIf PID = &H5E Then
+        ' S->C SID_WARDEN
+        AddChat Color.Cyan, StringFormat("[DEBUG] Warden packet received!")
+        
+    ElseIf PID = &H66 Then
+        ' S->C SID_FRIENDSUPDATE
+        EntryNum = Buffer.GetByte()
+        Status = FlagsToString(Buffer.GetByte(), FRIEND_STATUS_FLAGS)
+        Location = FRIEND_LOCATION_IDS.Item(Buffer.GetByte())
+        Product = StrReverse(Buffer.GetRaw(4))
+        LocationName = Buffer.GetString()
+        
+        If Location = "Offline" Then
+            AddChat Color.Cyan, StringFormat("[DEBUG] Friend update - entry #{0}, status: {1}", EntryNum, Status)
+        Else
+            AddChat Color.Cyan, StringFormat("[DEBUG] Friend update - entry #{0}, status: {1}, location: {2}, product: {3}, loc_name: {4}", _
+                EntryNum, Status, Location, Product, LocationName)
+        End If
+            
+    End If
+    
+    LastPacketReceived = Array(Protocol, PID, Length, Data)
+End Sub
+
+
+Sub Event_PacketSent(Protocol, PID, Length, Data)
+    If Protocol <> "BNCS" Then Exit Sub
+    
+    Set Buffer = DataBufferEx()
+    Buffer.Data = Mid(Data, 5)
+    
+    If PID = &H07 Then
+        ' C->S SID_REPORTVERSION
+        Buffer.GetDWORD()                           ' Platform
+        ProductID = StrReverse(Buffer.GetRaw(4))    ' Product
+        Buffer.GetDWORD()                           ' Version byte
+        
+        ExeVer = Buffer.GetDWORD()
+        ExeHash = Buffer.GetDWORD()
+        ExeInfo = Buffer.GetString()
+        
+        If Left(CRevData.Item("Archive"), 9) = "lockdown-" Then
+            ExeInfo = "0x" & BytesToHex(ExeInfo)
+        End If
+        
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] OLS AUTH (0x07) - Product: {3}, Version: 0x{0}, Hash: 0x{1}, Info: {2}", HexFormat(ExeVer, 8), HexFormat(ExeHash, 8), ExeInfo, ProductID)
+            
+    ElseIf PID = &H0A Then
+        ' C->S SID_ENTERCHAT
+        Username = Buffer.GetString()
+        Statstring = Buffer.GetString()
+        
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] ENTER_CHAT (0x0A) - Username: {0}, Statstring: {1}", Username, Statstring)
+            
+    ElseIf PID = &H0B Then
+        ' C->S SID_GETCHANNELLIST
+        ProductID = StrReverse(Buffer.GetRaw(4))
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] GET_CHANNEL_LIST (0x0B) - Product: {0}", ProductID)
+            
+    ElseIf PID = &H0C Then
+        ' C->S SID_JOINCHANNEL
+        Flags = Buffer.GetDWORD()
+        ChannelName = Buffer.GetString()
+        
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] JOIN CHANNEL - Flags: 0x{0}, Channel: {1}", HexFormat(Flags, 8), ChannelName)
+    
+    ElseIf PID = &H12 Then
+        ' C->S SID_LOCALEINFO
+        SystemTime = Buffer.GetFileTime()
+        LocalTime = Buffer.GetFileTime()
+        TZBias = Buffer.GetDWORD()
+        SystemLCID = Buffer.GetDWORD()
+        UserLCID = Buffer.GetDWORD()
+        LangID = Buffer.GetDWORD()
+        LangName = Buffer.GetString()
+        CountryCode = Buffer.GetString()
+        CountryAbbrev = Buffer.GetString()
+        CountryName = Buffer.GetString()
+        
+        AddChat Color.Cyan, StringFormat( _
+            "[DEBUG] LOCALE INFO - Time: {0}, SysLCID: 0x{1}, UserLCID: 0x{2}, LangID: 0x{3}, LangName: {4}, Country: {5} ({6})", _
+            LocalTime, HexFormat(SystemLCID, 8), HexFormat(UserLCID, 8), HexFormat(LangID, 8), LangName, CountryAbbrev, CountryName)
+    
+    ElseIf PID = &H26 Then
+        ' C->S SID_READUSERDATA
+        NumAccounts = Buffer.GetDWORD()
+        NumKeys = Buffer.GetDWORD()
+        
+        Set obj = New UserDataRequest
+        ReDim LocAccountList(NumAccounts - 1)
+        ReDim LocKeyList(NumKeys - 1)
+        
+        With obj
+            .AccountList = LocAccountList
+            .KeyList = LocKeyList
+            .RequestID = Buffer.GetDWORD()
+        
+            For i = 0 To NumAccounts - 1
+                .AccountList(i) = Buffer.GetString()
+            Next
+            
+            For i = 0 To NumKeys - 1
+                .KeyList(i) = Buffer.GetString()
+            Next
+        
+            AddChat Color.Cyan, StringFormat("[DEBUG] Sent user data request with ID #{0} for {1} account(s) and {2} key(s).", _
+                .RequestID, NumAccounts, NumKeys)
+        
+        End With
+        
+        If Not UserDataRequests.Exists(obj.RequestID) Then
+            UserDataRequests.Add obj.RequestID, obj
+        End If
+        
+    ElseIf PID = &H2D Then
+        ' C->S SID_GETICONDATA
+        AddChat Color.Cyan, "[DEBUG] Requested icon file"
+        
+    ElseIf PID = &H33 Then
+        ' C->S SID_GETFILETIME
+        RequestID = Buffer.GetDWord()
+        Unknown = Buffer.GetDWord()
+        Filename = Buffer.GetString()
+        
+        AddChat Color.Cyan, StringFormat("[DEBUG] Requested filetime: {0} (ReqId: {1}, Unknown: {2})", Filename, RequestID, Unknown)
+        
+    ElseIf PID = &H50 Then
+        ' C->S SID_AUTH_INFO
+        ProtocolID = Buffer.GetDWord()
+        Platform = StrReverse(Buffer.GetRaw(4))
+        Product = StrReverse(Buffer.GetRaw(4))
+        VersionByte = Buffer.GetDWord()
+        Language = Buffer.GetDWord()
+        LocalIP = Buffer.GetDWord()
+        TimezoneBias = Buffer.GetDWord()
+        MPQLocale = Buffer.GetDWord()
+        UserLocale = Buffer.GetDWord()
+        CountryAbbrv = Buffer.GetString()
+        CountryName = Buffer.GetString()
+        
+        'AddChat Color.Cyan, StringFormat("[DEBUG] NLS client info (0x50) - Platform: {0}, Product: {1}, Language: {2}, Locale: {3}", _
+        '    Platform, Product, Language, UserLocale)    
+    
+    ElseIf PID = &H66 Then
+        ' C->S SID_FRIENDSUPDATE
+        EntryNum = Buffer.GetByte()
+        AddChat Color.Cyan, StringFormat("[DEBUG] Requesting friend update for entry #{0}", EntryNum)
+        
+    End If
+    
+    LastPacketSent = Array(Protocol, PID, Length, Data)
+End Sub
+
+Class UserDataRequest
+    Public AccountList
+    Public KeyList
+    Public RequestID
+End Class
